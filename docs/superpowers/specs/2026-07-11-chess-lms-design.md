@@ -1,351 +1,566 @@
 # Chess Tutor LMS — Design Spec
 
 **Date:** 2026-07-11
-**Status:** Draft (pending user review)
+**Status:** Draft v2 (revised after architecture review)
+**Revision note:** v1 had blocking issues in auth schema, authorization, the attempt/reward model, and the server-side solve protocol. v2 corrects these (review findings 1–20) and adds the DailyProgress table, immutable published puzzle-set versions, an append-only coin ledger, server-authoritative solve validation, and an accurate Lichess OAuth/import description.
 
 A learning management system for a chess tutor and their students. The tutor assigns puzzles calibrated to each student's level; students solve them and earn coins, streaks, badges, and leaderboard rank. Puzzles and student ratings come from Lichess.
 
 ## Context & Scope
 
-This build is for a single tutor running chess classes. The data model accommodates multiple tutors for a future migration to a multi-tenant platform, but no multi-tenant UI or global cross-tutor features are in scope for the MVP. The leaderboard is scoped per-tutor (students rank only against their own class).
+This build is for a single tutor running chess classes. **One class per tutor** for MVP — there is no `Class` entity; a tutor's roster *is* the class, and "class-wide" actions broadcast to all of the tutor's students. The data model accommodates multiple tutors for a future migration, but no multi-tenant UI or cross-tutor features are in scope.
 
 ### In scope (MVP)
-- Email/password auth with **Tutor** and **Student** roles
-- Lichess OAuth: students connect their Lichess account to sync ratings
+- Email/password auth with **Tutor** and **Student** roles (Better Auth)
+- Lichess OAuth (PKCE, optional): students may connect Lichess to sync ratings
 - Curated-slice Lichess puzzle library imported into Postgres
 - Two puzzle-serving paths: **tutor-curated sets** and an **auto-adaptive daily queue**
-- Gamification: coins (earn + spend), streaks, tutor-set daily goals, badges, per-tutor leaderboard
+- Server-authoritative solve validation (client never sees the solution)
+- Gamification: coins (earn + spend, append-only ledger), streaks, tutor-set daily goals, badges, per-tutor leaderboard
 - Tutor dashboard: roster, student progress, puzzle set CRUD, assignment, goal-setting
 - Student dashboard: practice, assigned sets, leaderboard, profile, power-up shop
+- Students without Lichess: supported via in-app calibration
 
 ### Out of scope (MVP)
-- Multi-tenant platform features / cross-tutor leaderboards
-- Mobile apps (web only; API is clean enough to add later)
-- Writing puzzle results back to the student's real Lichess account
-- Streak-freeze purchases, cosmetics storefront, Glicko-2 precise rating
+- Multi-class / multi-tenant platform features (data model is forward-compatible)
+- Writing results back to the student's real Lichess account
+- Streak-freeze purchases, cosmetics storefront
+- Precise Glicko-2 (a documented Elo approximation is used)
 
-## Decisions (from brainstorming)
+## Decisions
 
 | Decision | Choice |
 |---|---|
-| Scale | Single tutor now; data modeled for multi-tenant later |
+| Scale | Single tutor / one class; data modeled for multi-tenant later |
 | Tech stack | Next.js 15 (App Router) + TypeScript + Postgres + Prisma |
-| Puzzles | Bulk-import a curated slice of Lichess's puzzle DB into Postgres |
-| Student ratings | Lichess OAuth; game rating (rapid → blitz) as fallback when no puzzle rating |
-| Coins | Earned for leaderboard rank AND spent on hints/skips/bonus packs |
-| Leaderboard | Per-tutor (class-scoped) |
-| Daily goals | Tutor-set per student or class |
+| Auth | Better Auth (manages its own schema) + Lichess PKCE OAuth |
+| Puzzles | Curated slice of Lichess DB imported via PostgreSQL COPY |
+| Student ratings | Lichess puzzle rating as a *prior*; in-app Elo tracks actual skill separately |
+| Lichess | Optional; calibration fallback for unlinked students |
+| Coins | Earned (leaderboard) + spent (hints/skips/packs); append-only ledger |
+| Leaderboard | Per-tutor; display names; deterministic tie-breakers |
+| Daily goals | Tutor-set per student or class-wide |
 | Puzzle selection | Blended: tutor-curated sets + auto-adaptive queue |
 
 ## Tech Stack & Structure
 
 - **Next.js 15** App Router, React Server Components, TypeScript
-- **PostgreSQL** (Neon or Supabase free tier) via **Prisma**
-- **Better Auth** for email/password + **Lichess OAuth**
-- **react-chessboard** + **chess.js** for board rendering and move validation
+- **PostgreSQL** (Neon, pooled connection string for serverless) via **Prisma**
+- **Better Auth** for email/password + Lichess PKCE OAuth
+- **react-chessboard** + **chess.js** for board rendering and server-side move validation
 - **Tailwind CSS** + **shadcn/ui** for UI
-- Deploy: **Vercel**
+- Deploy: **Vercel** (puzzle import runs locally/CI, never on Vercel)
 
 ```
 chess-lms/
 ├── prisma/
 │   ├── schema.prisma
-│   └── import-puzzles.ts        # one-time Lichess CSV import script
+│   ├── scripts/
+│   │   ├── import-puzzles.ts     # local/CI import via COPY, resumable
+│   │   └── seed-tutor.ts         # administrative tutor seeding
+│   └── migrations/
 ├── src/
 │   ├── app/
-│   │   ├── (auth)/              # login, signup
-│   │   ├── (student)/           # dashboard, practice, leaderboard, sets, profile
-│   │   ├── (tutor)/             # roster, students, sets, assign, goals
-│   │   └── api/                 # lichess oauth, puzzle fetch, attempts
+│   │   ├── (auth)/               # login, signup (student invite codes)
+│   │   ├── (student)/
+│   │   ├── (tutor)/
+│   │   └── api/
+│   │       ├── auth/lichess/*    # PKCE OAuth callbacks
+│   │       ├── puzzles/next      # auto-queue fetch (opaque, no solution)
+│   │       ├── attempts          # server-authoritative solve finalization
+│   │       └── cron/*            # CRON_SECRET-protected nightly sync
 │   ├── lib/
-│   │   ├── auth.ts
-│   │   ├── lichess.ts           # OAuth + public API client
-│   │   ├── puzzles/             # assigned-set + auto-queue selection
-│   │   ├── gamification/        # coins, streaks, badges, goals
-│   │   └── db.ts                # Prisma client
-│   └── components/
-│       ├── chess/               # board, puzzle card
-│       ├── student/
-│       └── tutor/
+│   │   ├── auth.ts               # Better Auth config (role = additional field)
+│   │   ├── auth-guards.ts        # requireStudent() / requireTutor()
+│   │   ├── lichess.ts            # PKCE client; ratings from /api/account
+│   │   ├── puzzles/
+│   │   │   ├── selection.ts      # auto-queue (NOT EXISTS anti-join + fallback ladder)
+│   │   │   ├── assigned.ts       # tutor-set serving
+│   │   │   └── validate.ts       # server-side move validation via chess.js
+│   │   ├── rating.ts             # documented Elo with K-factor
+│   │   ├── gamification/
+│   │   │   ├── coins.ts          # append-only ledger, idempotent
+│   │   │   ├── streaks.ts        # DailyProgress-derived
+│   │   │   └── badges.ts         # idempotent upserts
+│   │   └── db.ts
+│   └── components/{chess,student,tutor}/
 ```
 
-Student and tutor experiences live in separate route groups so each has its own layout, nav, and access control — two apps sharing one database. `lib/` groups logic by domain so selection and gamification are isolated, testable units.
+## Auth, Roles & Authorization
+
+### Better Auth owns user/session schema
+User, session, verification, and account models are generated by Better Auth's CLI. We do **not** hand-roll these. The app-specific `role` ("TUTOR" | "STUDENT") is added as a Better Auth **additional field** (server-only, not client-writable). Password hashing, email verification, and password reset are configured through Better Auth.
+
+### Enrollment model (no public tutor signup)
+- **Tutor is seeded administratively** (`prisma/scripts/seed-tutor.ts`). There is no public "sign up as tutor" path — this prevents anyone from creating a tenant.
+- **Students enroll via invitation codes.** The tutor generates single-use (or multi-use) codes from their dashboard; the signup form requires a valid code. The code binds the new student to the generating tutor.
+- A student may operate **without linking Lichess** (see Calibration).
+
+### Authorization guards
+Every route and API handler resolves the authenticated user to a `Student` or `Tutor` profile, then scopes **all** queries through that profile:
+- `requireTutor()` — returns the tutor profile or 401.
+- `requireStudent()` — returns the student profile or 401.
+- Any by-ID access (student profile, assignment, attempt) is filtered by `tutorId` (tutor context) or `id === session.student.id` (student context). A record that exists but belongs to another tutor/student returns **404**, not 403 (no existence leak).
+
+### Privacy
+- Leaderboards use **display names** (set by student/tutor), never emails.
+- Better Auth email verification and password reset are enabled.
+- Account deletion + data retention policy is defined (cascade-delete a student's attempts/progress/unlocks/badges).
 
 ## Data Model (Prisma)
 
+Better Auth-generated models (`user`, `session`, `account`, `verification`) are omitted below; only app models are shown. The Lichess link lives in a custom `LichessConnection` (not Better Auth's generic `account`, since Lichess tokens are app-managed and short-lived in our flow).
+
 ```prisma
-// ─── Users & Auth ───
-model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  name         String?
-  role         Role     @default(STUDENT)
-  createdAt    DateTime @default(now())
-
-  student      Student?
-  tutor        Tutor?
-  accounts     Account[]
-}
-
-enum Role { TUTOR STUDENT }
-
-model Account {
-  id                 String   @id @default(cuid())
-  userId             String   @unique
-  user               User     @relation(fields: [userId], references: [id])
-  lichessUsername    String
-  lichessId          String   @unique
-  accessToken        String   // encrypted at rest
-  refreshToken       String?
-  puzzleRating       Int?
-  rapidRating        Int?
-  blitzRating        Int?
-  lastSyncedAt       DateTime?
-}
-
-// ─── Tutor & Student ───
+// ─── Tutor & Student profiles (1:1 with Better Auth user) ───
 model Tutor {
   id        String   @id @default(cuid())
   userId    String   @unique
-  user      User     @relation(fields: [userId], references: [id])
   students  Student[]
   sets      PuzzleSet[]
+  invites   InviteCode[]
+  createdAt DateTime @default(now())
 }
 
 model Student {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  tutorId       String
+  tutor         Tutor    @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  displayName   String                       // shown on leaderboard
+  timezone      String   @default("UTC")     // IANA tz for daily boundaries
+  createdAt     DateTime @default(now())
+
+  // ratings — external (Lichess prior) and in-app (actual skill) kept SEPARATE
+  lichessPuzzleRating Int?                   // pulled at link time, periodic sync
+  lichessGameRating   Int?                   // rapid → blitz fallback
+  inAppRating         Int     @default(1500) // Elo, updated by server on each solve
+  ratingK             Int     @default(40)   // K-factor, decreases as games accrue
+
+  // gamification balances (caches over CoinTransaction — see ledger)
+  coinBalance         Int     @default(0)    // spendable
+  lifetimeCoins       Int     @default(0)    // leaderboard, immutable-ish
+  dailyGoal           Int     @default(5)    // tutor-set
+
+  lichess             LichessConnection?
+  attempts            Attempt[]
+  dailyProgress       DailyProgress[]
+  assignments         Assignment[]
+  unlocks             Unlock[]
+  badges              StudentBadge[]
+  coinTxns            CoinTransaction[]
+  ratingEvents        RatingEvent[]
+}
+
+model LichessConnection {
   id              String   @id @default(cuid())
-  userId          String   @unique
-  user            User     @relation(fields: [userId], references: [id])
-  tutorId         String
-  tutor           Tutor    @relation(fields: [tutorId], references: [id])
+  studentId       String   @unique
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lichessId       String   @unique
+  lichessUsername String
+  // token is short-lived in our flow: used once to read ratings, then discarded.
+  // re-linking re-authorizes. (Lichess tokens don't expire, but we don't retain them.)
+  lastSyncedAt    DateTime?
+}
 
-  // calibration & in-app rating
-  currentRating   Int      @default(1500)
-  ratingDeviation Float    @default(350)
-
-  // gamification
-  coinBalance     Int      @default(0)   // spendable
-  lifetimeCoins   Int      @default(0)   // leaderboard, never decreases
-  streakDays      Int      @default(0)
-  lastSolveDate   DateTime?
-  dailyGoal       Int      @default(5)   // tutor-set
-
-  attempts        Attempt[]
-  assignments     Assignment[]
-  unlocks         Unlock[]
-  badges          StudentBadge[]
+model InviteCode {
+  id        String    @id @default(cuid())
+  tutorId   String
+  tutor     Tutor     @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  code      String    @unique
+  uses      Int       @default(0)
+  maxUses   Int       @default(1)
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
 }
 
 // ─── Puzzle library ───
+// At import time the FIRST UCI move (the opponent's setup move) is APPLIED to the
+// FEN, so `startFen` is the position the student actually plays from. The stored
+// `solutionMoves` begins with the student's first move.
 model Puzzle {
   id            String   @id
-  fen           String
-  solutionMoves String                  // UCI, space-separated
-  rating        Int
+  startFen      String                       // AFTER opponent setup move applied
+  solutionMoves String[]                     // student-side moves, UCI, in order
+  rating        Int                          // Lichess puzzle rating (prior only)
   ratingDev     Int
-  themes        String[]
-  openingTags   String[]
+  themes        String[] @default([])
+  openingTags   String[] @default([])
   popularity    Int
-  isCurated     Boolean  @default(true)
+  importedAt    DateTime @default(now())
 
-  sets          PuzzleSetItem[]
+  setItems      PuzzleSetItem[]
+  setVersions   PuzzleSetVersionItem[]
   attempts      Attempt[]
+  seenBy        StudentPuzzle[]
+
+  @@index([rating])
+  @@index([popularity])
 }
 
-// ─── Tutor-curated sets (dual-mode: hand-picked OR filter-based) ───
+// Anti-repeat + "seen" state, decoupled from attempts (one record per student+puzzle)
+model StudentPuzzle {
+  studentId  String
+  puzzleId   String
+  student    Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  puzzle     Puzzle  @relation(fields: [puzzleId], references: [id], onDelete: Cascade)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @updatedAt
+  timesSeen   Int      @default(1)
+
+  @@id([studentId, puzzleId])
+  @@index([studentId, lastSeenAt])
+}
+
+// ─── Tutor sets: manual OR filter; published as immutable versions ───
+enum PuzzleSetMode { MANUAL FILTER }
+
 model PuzzleSet {
-  id          String   @id @default(cuid())
+  id          String       @id @default(cuid())
   tutorId     String
-  tutor       Tutor    @relation(fields: [tutorId], references: [id])
+  tutor       Tutor        @relation(fields: [tutorId], references: [id], onDelete: Cascade)
   title       String
   description String?
-  themeFilter String[]?
+  mode        PuzzleSetMode
+  // FILTER-mode params (ignored when MANUAL)
+  themeFilter String[]     @default([])
   ratingMin   Int?
   ratingMax   Int?
-  isPublished Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  targetCount Int?                            // how many to materialize on publish
+  isPublished Boolean       @default(false)
+  createdAt   DateTime      @default(now())
 
-  items       PuzzleSetItem[]
+  items       PuzzleSetItem[]                 // MANUAL-mode source list (draft)
+  versions    PuzzleSetVersion[]
   assignments Assignment[]
 }
 
 model PuzzleSetItem {
-  id        String       @id @default(cuid())
+  id        String    @id @default(cuid())
   setId     String
-  set       PuzzleSet    @relation(fields: [setId], references: [id])
+  set       PuzzleSet @relation(fields: [setId], references: [id], onDelete: Cascade)
   puzzleId  String
-  puzzle    Puzzle       @relation(fields: [puzzleId], references: [id])
+  puzzle    Puzzle    @relation(fields: [puzzleId], references: [id])
   order     Int
 }
 
-model Assignment {
-  id        String    @id @default(cuid())
+// Immutable snapshot created at publish time. Assignments reference a version,
+// so later edits to the set (or changes to FILTER results) never mutate an
+// in-flight assignment's contents.
+model PuzzleSetVersion {
+  id        String   @id @default(cuid())
   setId     String
-  set       PuzzleSet @relation(fields: [setId], references: [id])
-  studentId String
-  student   Student   @relation(fields: [studentId], references: [id])
-  dueDate   DateTime?
-  createdAt DateTime  @default(now())
-  progress  Int       @default(0)
-  completed Boolean   @default(false)
+  set       PuzzleSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  version   Int                                  // monotonic per set
+  snapshot  Json                                   // materialized {puzzleId, order}[]
+  createdAt DateTime @default(now())
 
-  @@unique([setId, studentId])
+  items     PuzzleSetVersionItem[]
+  assignments Assignment[]
 }
 
-// ─── Solving history ───
-model Attempt {
-  id           String   @id @default(cuid())
-  studentId    String
-  student      Student  @relation(fields: [studentId], references: [id])
+model PuzzleSetVersionItem {
+  id          String           @id @default(cuid())
+  versionId   String
+  version     PuzzleSetVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  puzzleId    String
+  puzzle      Puzzle           @relation(fields: [puzzleId], references: [id])
+  order       Int
+}
+
+model Assignment {
+  id          String           @id @default(cuid())
+  versionId   String                              // points at immutable version
+  version     PuzzleSetVersion @relation(fields: [versionId], references: [id])
+  studentId   String
+  student     Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  dueDate     DateTime?
+  createdAt   DateTime         @default(now())
+  progress    Int              @default(0)
+  completed   Boolean          @default(false)
+  items       AssignmentItemProgress[]
+
+  @@unique([versionId, studentId])
+}
+
+// Per-item progress for an assignment — a puzzle can be attempted many times,
+// independently tracked here. Completion = solved at least once.
+model AssignmentItemProgress {
+  id           String     @id @default(cuid())
+  assignmentId String
+  assignment   Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   puzzleId     String
-  puzzle       Puzzle   @relation(fields: [puzzleId], references: [id])
-  solved       Boolean
-  usedHint     Boolean  @default(false)
-  usedSkip     Boolean  @default(false)
-  coinsAwarded Int      @default(0)
-  timeSpentMs  Int?
-  createdAt    DateTime @default(now())
+  order        Int
+  solved       Boolean    @default(false)
+  attempts     Int        @default(0)
+  firstSolvedAt DateTime?
 
-  @@unique([studentId, puzzleId])
+  @@unique([assignmentId, puzzleId])
 }
 
-// ─── Gamification: purchases & badges ───
-model Unlock {
-  id        String    @id @default(cuid())
+// ─── Attempts: one record PER PRESENTATION (not per puzzle) ───
+model Attempt {
+  id            String   @id @default(cuid())
+  studentId     String
+  student       Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  puzzleId      String
+  puzzle        Puzzle   @relation(fields: [puzzleId], references: [id])
+  assignmentId  String?                          // null = daily practice
+  solved        Boolean
+  usedHint      Boolean  @default(false)
+  usedSkip      Boolean  @default(false)
+  coinsAwarded  Int      @default(0)             // snapshot of this attempt's reward
+  timeSpentMs   Int?
+  createdAt     DateTime @default(now())
+
+  @@index([studentId, createdAt])
+  @@index([puzzleId])
+}
+
+// ─── Daily goals & streaks (timezone-correct) ───
+model DailyProgress {
   studentId String
-  student   Student   @relation(fields: [studentId], references: [id])
-  type      UnlockType
-  refId     String?
-  createdAt DateTime  @default(now())
+  date      DateTime                             // local-date midnight, tz-truncated
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  solvedCount Int     @default(0)
+  goalMet      Boolean @default(false)
+  goalBonusAwarded Boolean @default(false)       // idempotency flag
+
+  @@id([studentId, date])
+  @@index([date])
 }
 
+// ─── Gamification: append-only ledger + unlocks + badges ───
+enum CoinReason { SOLVE SOLVE_HINTED GOAL_BONUS STREAK_BONUS PURCHASE }
 enum UnlockType { HINT_TOKEN SKIP_TOKEN BONUS_PACK }
+
+model CoinTransaction {
+  id           String    @id @default(cuid())
+  studentId    String
+  student      Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  amount       Int                                 // +earn / -spend
+  reason       CoinReason
+  idempotencyKey String   @unique                  // prevents double-credit/double-spend
+  refId        String?                             // attemptId / packId
+  createdAt    DateTime  @default(now())
+
+  @@index([studentId, createdAt])
+}
+
+model Unlock {
+  id        String   @id @default(cuid())
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  type      UnlockType
+  refId     String?                            // bonus pack set version id
+  remaining Int      @default(1)                // consumables decrement; packs stay
+  createdAt DateTime @default(now())
+  @@index([studentId, type])
+}
 
 model StudentBadge {
   id        String   @id @default(cuid())
   studentId String
-  student   Student  @relation(fields: [studentId], references: [id])
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
   badgeKey  String
   awardedAt DateTime @default(now())
 
   @@unique([studentId, badgeKey])
 }
+
+// ─── Rating history for dashboard trend charts ───
+model RatingEvent {
+  id        String   @id @default(cuid())
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  rating    Int                                   // snapshot of inAppRating after the attempt
+  attemptId String?
+  createdAt DateTime @default(now())
+  @@index([studentId, createdAt])
+}
 ```
 
-**Key choices:**
-- **Two coin fields** — `coinBalance` (spendable) and `lifetimeCoins` (leaderboard, immutable). Spending never erodes rank.
-- **`currentRating` + `ratingDeviation`** on Student — lightweight Glicko so the auto-queue adapts from in-app solving, not just stale Lichess data.
-- **`PuzzleSet` is dual-mode** — hand-pick via `PuzzleSetItem[]`, or auto-fill via `themeFilter`/`ratingMin`/`ratingMax`.
-- **`Attempt` unique constraint** — one attempt per student per puzzle, preventing coin farming.
+**Key corrections from review:**
+- No `passwordHash` in app models — Better Auth owns it.
+- `String[]?` → `String[] @default([])` (lists can't be optional).
+- `Attempt` is no longer unique per puzzle — retries, comebacks, and re-practice all work. Anti-repeat lives in `StudentPuzzle`; assignment progress in `AssignmentItemProgress`.
+- Separate external (`lichessPuzzleRating`) vs in-app (`inAppRating`) ratings — never overwritten by sync.
+- `onDelete: Cascade` on all student-owned data; FK indexes via explicit `@@index`.
+- `PuzzleSetVersion` materializes an immutable snapshot at publish; assignments point at versions.
+- `CoinTransaction` append-only ledger with `idempotencyKey`; balances are cached sums.
+- `DailyProgress` keyed by local date for timezone-correct streaks.
+
+## Server-Authoritative Solve Protocol
+
+The client must **never** learn the solution, and must **never** decide the outcome.
+
+### Fetching a puzzle
+`GET /api/puzzles/next` (auto-queue) and the assignment-serving endpoint return an **opaque presentation**:
+```ts
+{
+  attemptId: "cuid",          // server-generated, references a pending Attempt row
+  startFen: "...",            // position to render (opponent setup move already applied)
+  sideToMove: "white" | "black",
+  themes: [...],              // optional, for display only
+}
+```
+**`solutionMoves` is never sent to the client.**
+
+### Solving
+The client streams the student's move; the server validates incrementally:
+1. Client posts `{ attemptId, move: "e2e4" }`.
+2. Server loads the `Attempt` (must be PENDING, owned by the session student), loads the puzzle's `solutionMoves`, and advances a server-side `chess.js` instance.
+3. Server checks the move:
+   - **Correct & not terminal** → apply, then auto-apply the next solution move (opponent reply). Respond `{ status: "continue" }`. (Opponent replies are part of `solutionMoves`.)
+   - **Correct & puzzle complete** → finalize: mark `solved`, run rewards in one transaction.
+   - **Incorrect** → respond `{ status: "incorrect" }` (optionally allow retries up to a limit, configurable). The attempt is not finalized as solved.
+4. **Finalize** runs atomically: create `CoinTransaction` (idempotency key = `attemptId:reward`), update `coinBalance`/`lifetimeCoins`, update `DailyProgress`, update `inAppRating` + `RatingEvent`, evaluate badges (idempotent upserts), update `AssignmentItemProgress` if applicable.
+
+### Anti-farming & concurrency
+- Rewards key off `attemptId` via the ledger's unique `idempotencyKey` — a duplicate finalize credits exactly once.
+- Spending (hint/skip/pack) uses a conditional update: `UPDATE ... SET coinBalance = coinBalance - cost WHERE id = ? AND coinBalance >= cost`. Zero rows affected → insufficient funds → 400.
+- A pending `Attempt` can be finalized at most once (state machine: PENDING → SOLVED/FAILED).
 
 ## Puzzle Selection Logic
 
-Two paths in `src/lib/puzzles/`, sharing the one puzzle store.
-
-### Path A — Assigned sets (tutor-curated)
-1. Student opens an `Assignment`.
-2. Fetch the `PuzzleSet`, then the next unattempted `PuzzleSetItem` by `order`.
-3. Render the board from `puzzle.fen`.
-4. On solve/fail → create `Attempt` → increment `Assignment.progress`.
-
-The tutor did the selection upfront; serving is deterministic.
+### Path A — Assigned sets
+Student opens an `Assignment` → serve the next `PuzzleSetVersionItem` whose `AssignmentItemProgress` is unsolved, lowest `order` first. Each presentation gets a fresh PENDING `Attempt`. Retries on a puzzle are allowed and tracked in `AssignmentItemProgress.attempts`.
 
 ### Path B — Auto-queue ("Daily Practice")
-1. Read `student.currentRating` and `ratingDeviation`.
-2. Compute a level window: `[currentRating - margin, currentRating + margin]`, where `margin = ratingDeviation` (scales with uncertainty — wide for new students, tight for veterans).
-3. Query `Puzzle` where `rating` is in the window and `id NOT IN` the student's attempted puzzle IDs. For MVP the auto-queue spans all themes — theme targeting is handled through tutor-assigned sets.
-4. Order by `popularity DESC`, return a batch, serve one at a time.
-5. On solve → `currentRating` nudges up, `ratingDeviation` narrows.
-6. On fail → `currentRating` nudges down.
+1. Read `inAppRating`, `ratingK`.
+2. Compute window `[inAppRating - margin, inAppRating + margin]`; `margin` starts wide (e.g. ±250) and narrows as rating events accrue.
+3. **Anti-repeat via correlated `NOT EXISTS`** (not a `NOT IN` list):
+   ```sql
+   SELECT p.* FROM "Puzzle" p
+   WHERE p.rating BETWEEN $lo AND $hi
+     AND NOT EXISTS (SELECT 1 FROM "StudentPuzzle" sp
+                     WHERE sp."puzzleId" = p.id AND sp."studentId" = $student)
+   ORDER BY p.popularity DESC
+   LIMIT 50;
+   ```
+4. **Fallback ladder** if the window is exhausted:
+   - Widen the window in steps (±250 → ±400 → ±600).
+   - If still empty, allow **least-recently-seen** puzzles (reuse `StudentPuzzle.lastSeenAt`).
+   - If still empty, return a "queue complete" state (surface to student — refresh later).
+5. On finalize, nudge `inAppRating` per the rating formula below.
 
-This is simplified Glicko — enough to keep puzzles in the student's zone of proximal development. A proper Glicko-2 implementation can replace it later without changing the interface.
+## Rating Formula
 
-**Anti-repeat:** indexed `NOT IN` against the curated slice (~150K–300K puzzles) means no student runs out.
+A documented Elo (not "simplified Glicko" hand-wave). External and in-app ratings stay separate; Lichess puzzle rating is a **prior used only to initialize** `inAppRating` at link time.
+
+- Expected score: `E = 1 / (1 + 10^((puzzleRating - inAppRating)/400))`
+- Update: `inAppRating += K * (actual - E)`, where `actual ∈ {1 win, 0 loss}` and `K = ratingK`.
+- `ratingK` starts at 40 and steps down as attempts accrue (40 → 32 → 24 at 30/100/300 solves), so early volatility calms over time.
+- `puzzleRating` is the puzzle's stored Lichess rating (a fixed property of the puzzle, not the student).
+- Nightly Lichess sync updates `lichessPuzzleRating`/`lichessGameRating` **only** — never touches `inAppRating`.
 
 ## Gamification Rules
 
-### Earning coins
-| Event | Coins |
-|---|---|
-| Solve (no hint) | +10 |
-| Solve with hint | +5 |
-| Fail | 0 (no penalty — failing is learning) |
-| Hit daily goal | +50 |
-| 7-day streak milestone | +100 |
+### Earning (append-only ledger entries)
+| Event | Coins | Idempotency key |
+|---|---|---|
+| Solve (no hint) | +10 | `attemptId:solve` |
+| Solve with hint | +5 | `attemptId:solve` |
+| Fail | 0 | — |
+| Hit daily goal | +50 | `studentId:date:goal` |
+| 7-day streak milestone | +100 | `studentId:streak:7` |
 
-### Spending coins
+Failures award nothing but cost nothing (failing is learning). Retries are allowed; the solve reward credits once per attempt finalize, keyed by `attemptId`.
+
+### Spending (conditional updates, balance ≥ cost)
 | Power-up | Cost | Effect |
 |---|---|---|
-| Hint | 15 | Highlights next correct move |
-| Skip | 30 | Marks puzzle seen, no reward, does not break streak |
-| Bonus pack | 100 | Unlocks an extra themed puzzle set |
+| Hint | 15 | Server reveals next correct move for the current attempt |
+| Skip | 30 | Marks attempt seen, no reward, does not break streak |
+| Bonus pack | 100 | Unlocks an extra themed `PuzzleSetVersion` |
 
-### Streaks
-Incremented when the daily goal is met. Broken if a day passes without meeting it. No streak-freeze purchase in MVP.
+### Streaks (DailyProgress-derived)
+A day is "met" when `DailyProgress.solvedCount >= dailyGoal` for that student's local date. Streak = count of consecutive met days ending today (or yesterday if today not yet met). Computed from consecutive `DailyProgress` rows; immune to double goal-bonus via `goalBonusAwarded`. Correct across local midnight and DST because boundaries use the student's IANA timezone.
 
-### Badges (checked on each solve against `Attempt` history)
-- `first_solve`, `streak_7`, `streak_30`, `centurion` (100 solves), `sharpshooter` (10 correct in a row), `theme_master_<theme>` (20 solves in a theme), `comeback` (solve after 3 fails in a row)
+### Badges (idempotent upserts)
+Precise definitions, checked at finalize:
+- `first_solve` — first solved attempt ever.
+- `streak_7` / `streak_30` — current streak reaches 7 / 30.
+- `centurion` — lifetime solved count ≥ 100.
+- `sharpshooter` — last 10 attempts all solved.
+- `theme_master_<theme>` — 20 solved attempts on puzzles whose `themes` contains `<theme>` (a puzzle with multiple themes counts toward each).
+- `comeback` — an attempt solved immediately following 3 consecutive failed attempts (requires multiple attempts; possible because retries are allowed).
+Upsert keyed on `(studentId, badgeKey)` — awarding twice is a no-op.
 
 ### Leaderboard
-Ranks all students under a tutor by `lifetimeCoins` desc. Indexed query. Visible to students (motivation) and tutor (overview).
+Ranks the tutor's students by `lifetimeCoins DESC`, tie-broken by (solved count DESC, earliest `centurion`/achievement time, id ASC). Display names only.
 
 ## Lichess Integration
 
-### OAuth (student links account)
-1. Student clicks "Connect Lichess" → redirect to `lichess.org/oauth`.
-2. Lichess returns a code → `/api/auth/lichess/callback` exchanges it for an access token.
-3. `GET /api/account` → `lichessId`, `lichessUsername`.
-4. `GET /api/user/{username}/perf/{type}` for `puzzle`, `rapid`, `blitz` → store ratings.
-5. Persist to `Account`, linked to the `Student`.
+### OAuth — PKCE (no client secret, no refresh token)
+1. Student clicks "Connect Lichess" → server generates a PKCE verifier + S256 challenge, stores verifier in the auth session, redirects to `lichess.org/oauth?response_type=code&client_id=…&code_challenge_method=S256&code_challenge=…&scope=email+preference&redirect_uri=…&state=…`.
+2. Lichess redirects back with `code`.
+3. Server exchanges `code` + verifier at `lichess.org/api/token` (no client secret). Receives a long-lived `access_token`.
+4. Server calls **`GET /api/account` once** with the bearer token — the `perfs` object contains ratings for every variant including `puzzle`, `rapid`, `blitz`.
+5. Persist `lichessId`, `lichessUsername`, and the ratings to `LichessConnection` + the student's `lichessPuzzleRating`/`lichessGameRating`. **Discard the token** (ratings are public; we don't need ongoing authenticated access).
+6. Initialize `inAppRating` from the prior: `lichessPuzzleRating` → else `lichessGameRating` → else leave at 1500. **Only at first link**; later syncs don't touch `inAppRating`.
 
-### Rating calibration
-```
-currentRating =
-  account.puzzleRating      if present
-  else account.rapidRating  if present
-  else account.blitzRating  if present
-  else 1500
-ratingDeviation = 350   // wide — untrusted until in-app data accrues
-```
-Re-synced nightly via a scheduled job to track rating drift on Lichess.
+(There is no refresh token — Lichess doesn't issue one. Re-sync uses public `GET /api/user/{username}`; re-linking re-runs OAuth if needed.)
 
-### Puzzle import (one-time, `prisma/import-puzzles.ts`)
-- Download `lichess_db_puzzle.csv.bz2` from Lichess.
-- Stream-parse, filter to rating 400–2300, popularity > 0.
-- Bulk insert in chunks of 5000 via `prisma.puzzle.createMany()`.
-- Result: ~150K–300K rows, ~100MB, ~10 min runtime.
+### Nightly sync (CRON_SECRET-protected)
+For each linked student, `GET /api/user/{username}` (public, no token) → refresh `lichessPuzzleRating`/`lichessGameRating`. Handles 429 with backoff; failures leave previous values intact. Runs on Vercel Cron with a `CRON_SECRET` header.
 
-### API client
-Thin `fetch` wrapper (or `lys-cjs/lichess-api`) in `src/lib/lichess.ts`. Read endpoints are generously rate-limited; one sync per student per night is negligible load.
+### Puzzle import (`prisma/scripts/import-puzzles.ts`, run locally or in CI — never on Vercel)
+- Source: `https://database.lichess.org/lichess_db_puzzle.csv.zst` (Zstandard, not bz2; ~4M+ rows total).
+- Stream-decompress with `zstandard`, parse CSV stream.
+- **Apply the opponent's setup move:** the CSV `Moves` field is `oppUCI studentUCI …`. The first move is the opponent's; apply it to the FEN with `chess.js` to produce `startFen`, and store `solutionMoves` starting from the student's move. Skip any puzzle whose move line fails to validate.
+- Filter: rating 400–2300, popularity > 0.
+- **Bulk load via PostgreSQL `COPY`** (not thousands of Prisma inserts) into a staging table, then `INSERT … ON CONFLICT (id) DO NOTHING` into `Puzzle`. Resumable/idempotent — re-running skips already-imported IDs.
+- Result: ~150K–300K curated rows.
+
+## Serverless & Database Notes
+
+- Use Neon's **pooled** connection string for Prisma in deployment (or the Neon serverless adapter) to avoid exhausting connections on Vercel.
+- Co-locate app and DB regions; keep transactions short (the finalize transaction is the longest-lived write path).
+- All foreign keys get explicit `@@index` (Postgres does not auto-index FKs).
+- Check constraints: `coinBalance >= 0`, `lifetimeCoins >= 0`, `remaining >= 0` (enforced in app via conditional updates; DB-level checks as backstop where supported).
 
 ## Application Pages
 
 ### Auth
-- `/login`, `/signup` — email/password. Signup selects role (Tutor or Student).
+- `/login`, `/signup` — email/password. Signup requires a valid invite code (binds student to a tutor). No public tutor signup.
+- `/connect-lichess` — starts the PKCE flow; optional.
 
-### Student (`(student)`)
-- `/dashboard` — rating, streak, daily goal progress, coin balance, assigned sets, "Start Practice"
-- `/practice` — auto-queue solver; full-screen board, hint/skip buttons, coin reward animation
-- `/sets/[assignmentId]` — work through a tutor-assigned set
-- `/leaderboard` — class ranking by lifetime coins
-- `/profile` — Lichess connection, badges, stats, power-up shop
+### Student (`(student)`) — all guarded by `requireStudent()`
+- `/dashboard` — `inAppRating`, streak, daily goal progress (from `DailyProgress`), coin balance, assigned sets, "Start Practice". Rating trend from `RatingEvent`; last-active from latest `Attempt.createdAt`.
+- `/practice` — auto-queue solver; opaque puzzle fetch, incremental move validation, hint/skip buttons, coin animation.
+- `/sets/[assignmentId]` — assigned set solver (same board, version-backed items).
+- `/leaderboard` — class ranking, display names, deterministic tie-breakers.
+- `/profile` — Lichess connection, badges, stats, power-up shop.
 
-### Tutor (`(tutor)`)
-- `/roster` — students with ratings, streaks, last-active, assignment progress
-- `/students/[id]` — solve history, accuracy by theme, rating trend, badges
-- `/sets` — CRUD for puzzle sets (hand-pick or filter); publish
-- `/assign` — assign a set to a student or class, set due date
-- `/goals` — set daily puzzle target per student or class-wide
+### Tutor (`(tutor)`) — all guarded by `requireTutor()`, every query scoped by `tutorId`
+- `/roster` — students (display name, `inAppRating`, streak, last-active, assignment progress).
+- `/students/[id]` — solve history, accuracy by theme, rating trend (`RatingEvent`), badges. 404 if `student.tutorId !== tutor.id`.
+- `/sets` — CRUD; MANUAL (pick puzzles) or FILTER (theme/range); publish materializes a `PuzzleSetVersion`.
+- `/assign` — assign a version to a student or the whole roster; due date.
+- `/goals` — set `dailyGoal` per student or class-wide.
+- `/invites` — generate invite codes.
 
 ### API routes
-- `/api/auth/lichess/*` — OAuth callbacks
-- `/api/puzzles/next` — auto-queue fetch (called from `/practice`)
-- `/api/attempts` — submit solve/fail; triggers coin + rating + streak + badge updates
+- `/api/auth/lichess/*` — PKCE callbacks.
+- `/api/puzzles/next` — opaque auto-queue fetch.
+- `/api/attempts` — create pending; submit move; finalize (server-authoritative).
+- `/api/cron/sync-lichess` — CRON_SECRET-protected nightly rating sync.
+
+## Verification Gates (tests to write before "done")
+
+1. **Concurrency:** two simultaneous finalizes of the same attempt grant exactly one reward and one progress update.
+2. **Retries:** a failed puzzle can be retried; it appears independently in an assignment's progress.
+3. **Authorization:** cross-tutor and cross-student IDs always return 404.
+4. **Streaks:** correct across local midnight and DST transitions (use a fixed-clock test with tz-aware dates).
+5. **Queue fallback:** an exhausted rating window widens, then falls back to least-recently-seen, then "queue complete" — deterministically.
+6. **Lichess resilience:** 429 responses and interrupted imports resume without duplicate puzzles or duplicate rewards.
+7. **Solve integrity:** a client-submitted move is validated server-side; the solution is never present in any response payload.
+8. **Spending:** a hint/skip/pack purchase with insufficient balance fails atomically (no partial state).
 
 ## Open Questions / Future
 
-- Glicko-2 precise rating (swap-in replacement for simplified logic)
-- Streak-freeze power-up, cosmetics shop (out of MVP scope)
-- Multi-tenant platform features (data model already supports it)
-- Mobile app (API is clean enough to support one later)
+- Glicko-2 precise rating (swap-in for the Elo formula; interface unchanged).
+- Streak-freeze power-up, cosmetics shop (out of MVP).
+- Multi-class / multi-tenant (data model is forward-compatible; add `Class` + scoping).
+- Mobile app (API surface is clean enough to support one later).
