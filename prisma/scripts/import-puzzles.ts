@@ -93,44 +93,43 @@ async function ensureDownloaded(): Promise<void> {
     return;
   }
 
-  // Check if we already have a complete download. Lichess sends Content-Length
-  // but we can't easily HEAD-check it; instead we assume >100MB is complete
-  // (the file is ~1.5GB, partial downloads from a reset are usually <100MB).
-  // A more robust check would verify the zstd footer, but curl -C - handles this.
-  if (existsSync(DOWNLOAD_PATH) && statSync(DOWNLOAD_PATH).size > 100_000_000) {
-    const size = statSync(DOWNLOAD_PATH).size;
-    console.log(`Download already exists: ${DOWNLOAD_PATH} (${(size / 1e6).toFixed(1)} MB)`);
-    return;
-  }
-
-  console.log(`Downloading ${CSV_URL} (resumable via curl -C -) ...`);
+  // Always run curl with -C - (resume). If the file is already complete, curl
+  // detects this and exits immediately. If it's partial, curl resumes. If it
+  // doesn't exist, curl starts fresh. This is the simplest correct approach —
+  // no fragile size heuristics.
   const { mkdirSync } = await import("node:fs");
   mkdirSync("tmp", { recursive: true });
 
-  // Use curl with -C - (resume) and --retry (auto-retry on connection drops).
-  // This is far more robust than Node's fetch for large file downloads.
+  const existingSize = existsSync(DOWNLOAD_PATH) ? statSync(DOWNLOAD_PATH).size : 0;
+  console.log(
+    `Downloading ${CSV_URL} (resumable via curl -C -)${existingSize > 0 ? ` — resuming from ${(existingSize / 1e6).toFixed(1)} MB` : ""} ...`
+  );
+
   await new Promise<void>((resolve, reject) => {
     const curl = spawn("curl", [
       "-L",           // follow redirects
-      "-C", "-",      // resume from where we left off
-      "--retry", "5", // retry up to 5 times on transient errors
+      "-C", "-",      // resume from where we left off (or start fresh)
+      "--retry", "10", // retry up to 10 times on transient errors
       "--retry-delay", "5",
+      "--retry-all-errors", // retry on all errors, not just transient ones
+      "-s",           // silent (don't spam progress bar to stderr)
+      "--show-error", // but do show errors
       "-o", DOWNLOAD_PATH,
       CSV_URL,
     ]);
 
-    curl.stdout.on("data", (d) => process.stdout.write(d));
-    curl.stderr.on("data", (d) => process.stderr.write(d));
+    let stderr = "";
+    curl.stderr.on("data", (d) => { stderr += d.toString(); });
 
     curl.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`curl exited with code ${code}`));
+      else reject(new Error(`curl exited with code ${code}: ${stderr.trim()}`));
     });
     curl.on("error", reject);
   });
 
   const size = statSync(DOWNLOAD_PATH).size;
-  console.log(`Downloaded ${(size / 1e6).toFixed(1)} MB`);
+  console.log(`Download complete: ${(size / 1e6).toFixed(1)} MB`);
 }
 
 async function ensureStagingTable(pool: Pool): Promise<void> {
