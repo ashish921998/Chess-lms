@@ -1,8 +1,8 @@
 # Chess Tutor LMS — Design Spec
 
 **Date:** 2026-07-11
-**Status:** Draft v2.1 (revised after two rounds of architecture review)
-**Revision note:** v1 had blocking issues in auth schema, authorization, the attempt/reward model, and the server-side solve protocol. v2 corrected the Lichess OAuth flow, schema typing, and coin ledger, but left three true blockers: the `Attempt` model had no state machine, `StudentPuzzle` lacked its reverse Prisma relation, and the rating protocol had no defined failure event (infinite retries ⇒ rating only goes up). v2.1 adds an explicit `AttemptStatus` state machine with `moveIndex`/`finalizedAt`, a single-flight `/next` issuance protocol, business-level reward entitlement keys (so abandoning and re-opening a puzzle can't double-reward), rating failure rules, the missing Prisma relations and `@@unique` constraints, conditional-update concurrency control throughout, RESTRICT on published-content deletion, and a fully-specified hint/skip API contract.
+**Status:** Draft v2.2 (revised after three rounds of architecture review)
+**Revision note:** v2.1 left six real defects: `StudentPuzzle` was overloaded as both a permanent anti-repeat row and a transient issuance claim (conflicting semantics); the ledger relied on Prisma's throw-on-unique to "skip" duplicate credits (it actually aborts the transaction); hint/skip could charge coins on an already-finalized attempt; wrong-move duplicates weren't idempotent; "replay attenuation" was referenced but never defined; and several schema/protocol contradictions (`lifetimeCoins` invariant, `RatingEvent` had no outcome field and a dangling `attemptId`, `Unlock.remaining` non-null vs pack-insert-null, `snapshot` Json dual-sourcing versions). v2.2 adds a separate `AttemptReservation` for issuance, `ON CONFLICT DO NOTHING RETURNING` for ledger credits, `commandId` idempotency on every accepted command, an explicit "first-terminal-only" replay rule, a student-row lock serializing rating updates, and resolves all schema contradictions.
 
 A learning management system for a chess tutor and their students. The tutor assigns puzzles calibrated to each student's level; students solve them and earn coins, streaks, badges, and leaderboard rank. Puzzles and student ratings come from Lichess.
 
@@ -249,13 +249,14 @@ model PuzzleSetItem {
 // Immutable snapshot created at publish time. Assignments reference a version,
 // so later edits to the set (or changes to FILTER results) never mutate an
 // in-flight assignment's contents. Deletion is RESTRICT once any assignment
-// references it (published content is archival, not destroyable).
+// references it (published content is archival, not destroyable). The version's
+// contents live ONLY in the normalized `PuzzleSetVersionItem[]` rows — there is
+// no denormalized JSON copy (single source of truth).
 model PuzzleSetVersion {
   id        String   @id @default(cuid())
   setId     String
   set       PuzzleSet @relation(fields: [setId], references: [id], onDelete: Cascade)
   version   Int                                  // monotonic per set
-  snapshot  Json                                   // materialized {puzzleId, order}[]
   createdAt DateTime @default(now())
 
   items     PuzzleSetVersionItem[]
@@ -314,6 +315,9 @@ model AssignmentItemProgress {
 // State machine: PENDING → {SOLVED | FAILED | SKIPPED | ABANDONED}, terminal.
 // Finalization is a one-way transition guarded by a conditional update
 // (WHERE status = PENDING) so a concurrent finalize on the same row is a no-op.
+// `revision` increments on EVERY accepted command (correct, incorrect, or
+// finalize) so duplicate HTTP retries are detected: a client sends commandId,
+// and AcceptedCommand(attemptId, commandId) UNIQUE makes the retry a no-op.
 enum AttemptStatus { PENDING SOLVED FAILED SKIPPED ABANDONED }
 
 model Attempt {
@@ -326,19 +330,60 @@ model Attempt {
   assignment    Assignment?   @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
   status        AttemptStatus @default(PENDING)
   moveIndex     Int           @default(0)          // cursor: next solution ply the student owes
-  solved        Boolean       @default(false)      // true iff status = SOLVED (denormalized for queries)
+  revision      Int           @default(0)          // increments per accepted command (idempotency)
+  solved        Boolean       @default(false)      // true iff status = SOLVED
   usedHint      Boolean       @default(false)
   usedSkip      Boolean       @default(false)
-  failCount     Int           @default(0)          // wrong-move submissions this attempt
+  failCount     Int           @default(0)          // distinct wrong commands this attempt
+  isReplay      Boolean       @default(false)      // true if this puzzle was already solved by this student
   coinsAwarded  Int           @default(0)
   timeSpentMs   Int?
   createdAt     DateTime      @default(now())
   finalizedAt   DateTime?                          // set on first terminal transition
+  ratingEvent   RatingEvent?
+  commands      AcceptedCommand[]
 
   @@index([studentId, createdAt])
   @@index([puzzleId])
   @@index([assignmentId])
   @@index([status])
+  @@index([studentId, status])
+}
+
+// Idempotency for EVERY accepted command (correct move, wrong move, finalize),
+// not just cursor-advancing ones. A duplicate HTTP retry (network blip) hits
+// the UNIQUE(attemptId, commandId) constraint and replays the prior result
+// instead of, e.g., double-counting a wrong move toward FAIL_LIMIT.
+model AcceptedCommand {
+  id         String   @id @default(cuid())
+  attemptId  String
+  attempt    Attempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  commandId  String                           // client-generated UUID per command
+  kind       String                           // "continue" | "incorrect" | "solved" | "failed"
+  result     Json                             // the response body we returned the first time
+  createdAt  DateTime @default(now())
+
+  @@unique([attemptId, commandId])
+  @@index([attemptId])
+}
+
+// Transient issuance reservation, SEPARATE from StudentPuzzle. Created when a
+// puzzle is issued (POST /next) to claim the slot; deleted when the attempt is
+// finalized (or when abandoned by the TTL sweep). StudentPuzzle (the permanent
+// anti-repeat row) is written ONLY at finalize-solved, so abandonment does NOT
+// poison anti-repeat freshness.
+model AttemptReservation {
+  id         String   @id @default(cuid())
+  attemptId  String   @unique
+  attempt    Attempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  studentId  String
+  puzzleId   String
+  assignmentItemId String?                     // if issued from an assignment
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime                          // TTL; swept to ABANDONED
+
+  @@index([studentId])
+  @@index([assignmentItemId])
 }
 
 // ─── Daily goals & streaks (timezone-correct) ───
@@ -355,11 +400,14 @@ model DailyProgress {
 }
 
 // ─── Gamification: append-only ledger + unlocks + badges ───
-// BALANCES ARE CACHES. coinBalance/lifetimeCoins are always the signed sum of
-// CoinTransaction.amount for that student. Every credit AND every debit appends
-// a ledger row in the SAME transaction that mutates the balance, so the cache
-// and ledger can never diverge. Idempotency is enforced by a UNIQUE constraint
-// on a business key (see key scheme below), not just attemptId.
+// BALANCES ARE CACHES, derived from the ledger by two DISTINCT invariants:
+//   coinBalance   = SUM(amount)                          // signed: spends reduce it
+//   lifetimeCoins = SUM(amount) WHERE amount > 0          // earnings only, never decreases
+// Every credit AND every debit appends a ledger row in the SAME transaction
+// that mutates the balance, so cache and ledger can never diverge. Idempotency
+// is enforced by a UNIQUE constraint on a business key (see keys below), and
+// ledger inserts use ON CONFLICT DO NOTHING RETURNING — NOT Prisma's create(),
+// which throws and aborts the transaction on a unique collision.
 enum CoinReason {
   SOLVE
   SOLVE_HINTED
@@ -383,14 +431,20 @@ model CoinTransaction {
   @@index([studentId, createdAt])
 }
 
+// Consumables (HINT/SKIP tokens) use `remaining` (decrements); permanent
+// entitlements (BONUS_PACK) set `remaining = null` (never consumed). Nullable
+// so packs and tokens share one table without a sentinel int.
+enum UnlockType { HINT_TOKEN SKIP_TOKEN BONUS_PACK }
+
 model Unlock {
-  id        String   @id @default(cuid())
+  id        String     @id @default(cuid())
   studentId String
-  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  student   Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
   type      UnlockType
-  refId     String?                            // bonus pack set version id
-  remaining Int      @default(1)                // consumables decrement; packs stay
-  createdAt DateTime @default(now())
+  refId     String?                              // bonus pack → PuzzleSetVersion id
+  remaining Int?                               // null = permanent; >0 = consumable count
+  createdAt DateTime   @default(now())
+
   @@index([studentId, type])
 }
 
@@ -405,37 +459,57 @@ model StudentBadge {
 }
 
 // ─── Rating history for dashboard trend charts ───
+// `outcome` records what kind of attempt produced this event so dashboards can
+// distinguish solve vs fail trend points. Only attempts that affect Elo create
+// a RatingEvent (skip and abandon do not).
+enum RatingOutcome { SOLVED FAILED }
+
 model RatingEvent {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   studentId String
-  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  rating    Int                                   // snapshot of inAppRating after the attempt
-  attemptId String?
-  createdAt DateTime @default(now())
+  student   Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  rating    Int                                     // snapshot of inAppRating after the attempt
+  outcome   RatingOutcome                            // what caused this rating point
+  delta     Int                                     // signed change applied this event
+  attemptId String        @unique                   // 1:1 with the attempt that caused it
+  attempt   Attempt      @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+
   @@index([studentId, createdAt])
 }
 ```
 
-**Key corrections from v2 review:**
+**Key corrections carried from v2 (still in force):**
 - No `passwordHash` in app models — Better Auth owns it.
 - `String[]?` → `String[] @default([])` (lists can't be optional).
-- `Student` now declares the `seenPuzzles StudentPuzzle[]` reverse relation (was missing — schema wouldn't validate).
-- `Attempt` is a per-**presentation** record with an explicit state machine (`AttemptStatus`, `moveIndex`, `finalizedAt`), not a per-puzzle unique row. Retries, comebacks, and re-practice all work.
-- `Attempt.assignmentId` is a real FK to `Assignment` (was a dangling string); `AssignmentItemProgress.puzzleId` is a real FK to `Puzzle`.
-- `AssignmentItemProgress` rows are **materialized at assignment creation** (one per version item), so "unsolved" always exists as a row and concurrent counts are unambiguous.
+- `Student` declares the `seenPuzzles StudentPuzzle[]` reverse relation.
+- `Attempt` is a per-**presentation** record with an explicit state machine (`AttemptStatus`, `moveIndex`, `revision`, `finalizedAt`).
+- `Attempt.assignmentId` and `AssignmentItemProgress.puzzleId` are real FKs; `AssignmentItemProgress` rows are materialized at assignment creation.
 - Separate external (`lichessPuzzleRating`) vs in-app (`inAppRating`) ratings — never overwritten by sync.
-- `PuzzleSetVersion` has `@@unique([setId, version])`; items have `@@unique([versionId, order])` and `@@unique([versionId, puzzleId])`. Published versions are `onDelete: Restrict` once assigned.
-- `CoinTransaction` append-only ledger; **both credits and debits** append a row in the same tx that mutates the balance. Idempotency keys are **business-level entitlements**, not just `attemptId`.
-- `DailyProgress` keyed by local date for timezone-correct streaks; `date` is `DateTime @db.Date`.
+- `PuzzleSetVersion` has `@@unique([setId, version])`; items `@@unique([versionId, order])` and `@@unique([versionId, puzzleId])`; published versions `onDelete: Restrict`.
+- `DailyProgress` keyed by local date; `date` is `DateTime @db.Date`.
+
+**New in v2.2 (this revision):**
+- **Issuance vs anti-repeat separated:** `AttemptReservation` (transient, deleted at finalize/TTL) claims the slot; `StudentPuzzle` (permanent) is written only on SOLVED. Abandonment no longer poisons anti-repeat.
+- **One PENDING attempt per student:** issuance holds `SELECT … FOR UPDATE` on the Student row. (A Postgres partial unique index `CREATE UNIQUE INDEX one_pending_attempt ON "Attempt"("studentId") WHERE status = 'PENDING'` is added in migration as a backstop.)
+- **Command idempotency for all kinds:** `AcceptedCommand(attemptId, commandId)` UNIQUE + `revision` counter that increments on every accepted command (correct, wrong, finalize). Wrong moves no longer double-count on network retry.
+- **Ledger uses `ON CONFLICT DO NOTHING RETURNING`:** Prisma `create` throws on unique collision and aborts the tx; the spec now mandates raw SQL with `RETURNING` so collisions are a detectable no-op, not an exception.
+- **Hint/skip gated on `status = 'PENDING'` in the same tx as the charge:** `UPDATE … WHERE status='PENDING' RETURNING` — eliminates the race where a concurrent solve finalizes between balance check and flag flip.
+- **Replay rule is explicit:** `Attempt.isReplay` set when the `solve:` entitlement insert returns no row; replay solves skip Elo and `RatingEvent` entirely. No undefined "attenuated K."
+- **Rating updates serialized:** `SELECT … FOR UPDATE` on Student before any `inAppRating` write.
+- **Schema contradictions resolved:** `lifetimeCoins` invariant stated once (signed sum vs positive-only sum); `RatingEvent` has `outcome`/`delta` and `attemptId` is a real 1:1 FK; `Unlock.remaining` nullable; `UnlockType` enum defined; `PuzzleSetVersion.snapshot` dropped (normalized items are the single source of truth).
 
 ## Server-Authoritative Solve Protocol
 
-The client must **never** learn the solution, and must **never** decide the outcome. Three operations — **issue**, **move**, **spend** — each have explicit concurrency control.
+The client must **never** learn the solution, and must **never** decide the outcome. Three operations — **issue**, **move**, **spend** — each have explicit concurrency control. Two invariants run through all of them:
 
-### Issuing a puzzle — single-flight `/next`
-To prevent two parallel `/next` calls from creating two rewardable attempts for the same slot:
-1. **Auto-queue:** before inserting a PENDING `Attempt`, the server runs the anti-repeat selection query inside a transaction and does a `SELECT … FOR UPDATE`-style lock on the chosen puzzle row *or* immediately writes the `StudentPuzzle` (studentId, puzzleId) row with `ON CONFLICT DO NOTHING` as the issuance claim. If `timesSeen` already covers this presentation window, the query re-selects. One puzzle → at most one PENDING attempt per student at a time.
-2. **Assigned set:** the server picks the lowest-`order` `AssignmentItemProgress` row that is `solved = false`, locks it within the tx, and creates the PENDING `Attempt` pointing at it. A second concurrent call picks the *next* unsolved item (or returns the existing PENDING attempt for the same item if one exists — clients may reconnect to an in-flight attempt).
+- **Every client command carries a `commandId` (UUID).** The server records `AcceptedCommand(attemptId, commandId)` with the result it returned. A duplicate retry (same commandId) replays the stored result instead of re-executing — this makes wrong moves, correct moves, hints, and skips all idempotent, not just cursor-advancing ones.
+- **Rating updates are serialized by locking the student row.** Any transaction that writes `inAppRating`/`RatingEvent` first does `SELECT … FOR UPDATE` on the `Student` row. This prevents two concurrent finalizes (different attempts, same student) from both reading the same `inAppRating` and applying conflicting deltas.
+
+### Issuing a puzzle — single-flight `/next`, reservation separate from anti-repeat
+To prevent two parallel `/next` calls from creating two rewardable attempts, and to keep the permanent anti-repeat row clean:
+1. **Auto-queue:** the server runs the selection query inside a transaction, `SELECT … FOR UPDATE` on the chosen `Student` row (single-flight per student), then runs the anti-repeat `NOT EXISTS` selection. It creates the PENDING `Attempt` AND an `AttemptReservation` (studentId, puzzleId, expiresAt) in the same tx. A second concurrent `/next` for the same student blocks on the student-row lock; when it proceeds, the reservation exists so it selects a *different* puzzle (or returns the in-flight attempt).
+2. **Assigned set:** the server picks the lowest-`order` `AssignmentItemProgress` row with `solved = false` and no outstanding reservation for that item, locks it, creates the PENDING `Attempt` + `AttemptReservation(assignmentItemId)`.
 3. The response is an **opaque presentation**:
 ```ts
 {
@@ -443,67 +517,91 @@ To prevent two parallel `/next` calls from creating two rewardable attempts for 
   startFen: "...",            // opponent setup move already applied
   sideToMove: "white" | "black",
   themes: [...],              // display only
-  expectedMoveIndex: 0,       // the cursor the server expects on the next move submission
+  expectedRevision: 0,        // the revision the server expects on the next command
 }
 ```
-**`solutionMoves` is never sent to the client.** An attempt left PENDING past a TTL (e.g. 2 h) is swept to `ABANDONED` by a cron; it awards nothing and does not consume the puzzle slot (the student may be served it again later).
+**`solutionMoves` is never sent to the client.**
+4. **Reservation lifecycle:** the reservation is **deleted** when the attempt finalizes (any terminal state). A TTL cron sweeps expired reservations and marks their attempts `ABANDONED`. **Crucially, `StudentPuzzle` (the permanent anti-repeat row) is written ONLY on `SOLVED` finalize** — so abandonment does not poison anti-repeat freshness, and the same puzzle can be re-served later.
 
-### Submitting a move — optimistic-cursor concurrency
-Client posts `{ attemptId, move: "e2e4", expectedMoveIndex: n }`. Server:
+### Submitting a move — commandId + cursor concurrency
+Client posts `{ attemptId, commandId, move: "e2e4", expectedRevision: n }`. Server:
 1. Loads the `Attempt` (must be owned by the session student).
-2. **Conditional update** — only proceeds if `status = PENDING AND moveIndex = expectedMoveIndex`. This makes parallel move submissions serialize: the second to arrive sees `moveIndex` already advanced and is told to refresh (`409 expected_index_mismatch`). No read-modify-write gap.
-3. Validates `move` against `solutionMoves[moveIndex]` using a server-side `chess.js` instance constructed from `startFen` advanced through the already-played plies:
-   - **Illegal move** (not a legal chess move) → `{ status: "illegal" }`, cursor unchanged, no state change.
-   - **Legal but wrong** (not the solution move) → `{ status: "incorrect" }`, increment `failCount`. If `failCount >= FAIL_LIMIT` (default 2), finalize as `FAILED` (see Failure below). Otherwise the attempt stays PENDING for retry.
-   - **Correct & not terminal** → apply it, auto-apply the next solution ply (opponent reply), advance `moveIndex` by 2, respond `{ status: "continue", expectedMoveIndex: moveIndex }`.
-   - **Correct & terminal** → finalize as `SOLVED`.
+2. **Idempotency check:** `SELECT FROM AcceptedCommand WHERE attemptId = ? AND commandId = ?`. If found, return its stored `result` (the retry is a no-op). This catches duplicate HTTP retries on **every** command kind, including wrong moves.
+3. **Conditional update** — only proceeds if `status = PENDING AND revision = expectedRevision`. A concurrent command that already advanced `revision` causes a `409 revision_mismatch` (client refreshes).
+4. Validates `move` against `solutionMoves[moveIndex]` via server-side `chess.js`:
+   - **Illegal** → record `AcceptedCommand(commandId, "illegal", {status:"illegal"})`. `revision` does not change (no state mutated). Return stored result.
+   - **Legal but wrong** → increment `failCount`, advance `revision`, record `AcceptedCommand(commandId, "incorrect", {status:"incorrect", failCount})`. If `failCount >= FAIL_LIMIT` (default 2), finalize as `FAILED` in the same tx.
+   - **Correct & not terminal** → apply, auto-apply opponent reply, advance `moveIndex` by 2, advance `revision`, record `AcceptedCommand(commandId, "continue", {status:"continue", expectedRevision, opponentReply})`.
+   - **Correct & terminal** → finalize as `SOLVED` (below).
 
-### Finalize (SOLVED) — one atomic transaction
-A conditional update `UPDATE Attempt SET status = 'SOLVED', solved = true, finalizedAt = now() WHERE id = ? AND status = 'PENDING'` gates entry — concurrent finalizes on the same row are no-ops. Then in the **same transaction**:
-1. Insert `CoinTransaction` with `idempotencyKey = "solve:{studentId}:{puzzleId}"` (entitlement keys explained below) — `amount = usedHint ? 5 : 10`, reason accordingly. Add to `coinBalance` and `lifetimeCoins`. The UNIQUE constraint means only the first solve of a puzzle ever credits; replay-solves hit the constraint and skip the credit.
-2. Upsert `DailyProgress` for the student's local date: `solvedCount += 1`. If `solvedCount >= dailyGoal` and not `goalBonusAwarded`, set `goalBonusAwarded = true` and append a `+50 GOAL_BONUS` txn (key `goal:{studentId}:{date}`).
-3. Update `inAppRating` per the Elo formula (below), insert a `RatingEvent` snapshot, decay `ratingK` at solve-count thresholds.
-4. If `assignmentId` is set: conditional update the matching `AssignmentItemProgress` (`solved = false → true`, `firstSolvedAt = now()`, `attempts += 1`), recompute `Assignment.progress`, set `completed` if all items solved.
-5. Evaluate badges via idempotent upserts (keys below).
+### Finalize (SOLVED) — one atomic transaction, ON CONFLICT for the ledger
+`UPDATE Attempt SET status='SOLVED', solved=true, finalizedAt=now(), revision=revision+1 WHERE id=? AND status='PENDING'` gates entry. Then in the **same transaction**:
+1. **Ledger credit via `ON CONFLICT DO NOTHING RETURNING id`** (NOT Prisma `create`, which throws and aborts on unique collision). The entitlement key is `solve:{studentId}:{puzzleId}`:
+   ```sql
+   INSERT INTO "CoinTransaction" (id, "studentId", amount, reason, "idempotencyKey", "refId")
+   VALUES ($id, $student, $reward, $reason, 'solve:'||$student||':'||$puzzle, $attemptId)
+   ON CONFLICT ("idempotencyKey") DO NOTHING RETURNING id;
+   ```
+   - **If a row is RETURNED** (first-ever solve of this puzzle): increment `coinBalance` and `lifetimeCoins` by `$reward`.
+   - **If no row is RETURNED** (puzzle was already solved before — replay): award **no coins**, set `Attempt.isReplay = true`. The attempt still finalizes as SOLVED (the student did solve it), but no economy effect.
+2. **Write `StudentPuzzle`** (the permanent anti-repeat row) here — only on solve. `ON CONFLICT DO UPDATE SET "lastSeenAt" = now(), "timesSeen" = "StudentPuzzle"."timesSeen" + 1`.
+3. **Delete the `AttemptReservation`** for this attempt.
+4. Upsert `DailyProgress` (local date): `solvedCount += 1`. If `solvedCount >= dailyGoal` and not `goalBonusAwarded`, set it true and append a `+50 GOAL_BONUS` txn keyed `goal:{studentId}:{date}` (same `ON CONFLICT DO NOTHING RETURNING` pattern).
+5. **Rating update, serialized:** `SELECT … FOR UPDATE` on the Student row, compute Elo delta (see Rating Formula — replay solves do NOT affect rating), `UPDATE Student SET inAppRating = inAppRating + delta`, insert `RatingEvent(rating: newRating, outcome: SOLVED, delta, attemptId)`.
+6. If `assignmentId` set: conditional `UPDATE AssignmentItemProgress SET solved=true, "firstSolvedAt"=now() WHERE id=? AND solved=false` (atomic flip), recompute `Assignment.progress`.
+7. Evaluate badges via idempotent upserts (keys below).
 
 ### Failure — rating must be able to go DOWN
-A puzzle is recorded as `actual = 0` (a loss for Elo) **only** when the attempt transitions to `FAILED` or `SKIPPED`:
-- **FAILED** — `failCount` reaches `FAIL_LIMIT`. Finalize: conditional `status` update, then in the same tx apply the Elo update with `actual = 0` (rating drops), insert a `RatingEvent` with a `failed` marker, increment `AssignmentItemProgress.attempts` (if assigned). No coin reward.
-- **SKIPPED** — student spends a skip token (see Spend). Finalize: `status = SKIPPED`, `usedSkip = true`. **No Elo change** (skip is neutral — the student didn't engage), no reward, and it does **not** break a streak. It marks the `AssignmentItemProgress` as seen-but-unsolved (does not set `solved`).
-- **ABANDONED** — TTL sweep. No Elo, no reward, no streak impact.
+A puzzle is recorded as `actual = 0` (a loss for Elo) **only** on the attempt's first terminal transition to `FAILED`:
+- **FAILED** — `failCount` reaches `FAIL_LIMIT`. Conditional `status` update, record `AcceptedCommand(commandId, "failed", …)`, delete reservation. Then in same tx: `SELECT … FOR UPDATE` Student, apply Elo with `actual = 0` (rating drops), insert `RatingEvent(outcome: FAILED, delta, attemptId)`. No coin reward, no `StudentPuzzle` write. Increment `AssignmentItemProgress.attempts` if assigned (does not set `solved`).
+- **SKIPPED** — see Spend. **No Elo change** (neutral), no reward, does not break streak. The `AssignmentItemProgress` is marked seen-but-unsolved.
+- **ABANDONED** — TTL sweep. No Elo, no reward, no streak impact, reservation deleted.
 
-Because a fresh presentation gets a fresh attempt but rewards are keyed on **entitlements** (next), infinite retries cannot inflate rating upward without bound: the *first* solve credits once; subsequent presentations of an already-solved puzzle award no solve coins and apply Elo with diminishing weight (the puzzle is in `StudentPuzzle`, and re-solves are flagged `isReplay` so `ratingK` is lower-bounded and the rating effect is attenuated).
+**Replay rule (explicit):** only the **first terminal presentation** of a given (student, puzzle) pair affects Elo. Implementation: the rating step checks `Attempt.isReplay` (set when the `solve:` entitlement insert returned nothing). If `isReplay`, skip the Elo update and the `RatingEvent` insert entirely. This is the complete definition — there is no separate "attenuated K" formula; replays simply don't touch rating. This removes the farming vector (memorized replay-solves add zero rating) without inventing new math.
 
-### Entitlement idempotency keys (business-level, not just attemptId)
-The reward ledger is keyed on *what was earned*, not *which attempt earned it*:
-| Event | `idempotencyKey` | Meaning |
+### Entitlement idempotency keys (business-level)
+The reward ledger is keyed on *what was earned*, not *which attempt earned it*. All inserts use `ON CONFLICT DO NOTHING RETURNING` — a collision returns no row, and the caller skips the balance mutation:
+| Event | `idempotencyKey` | Balance effect on collision |
 |---|---|---|
-| First solve of a puzzle | `solve:{studentId}:{puzzleId}` | Abandon + re-open + solve awards the solve bonus **once** |
-| Daily goal hit | `goal:{studentId}:{date}` | Goal bonus once per local day |
-| 7-day streak | `streak:{studentId}:7` | Milestone bonus once per lifetime (or per occurrence — see config) |
-| Hint purchase | `hint:{attemptId}` | One charge per attempt |
-| Skip purchase | `skip:{attemptId}` | One charge per attempt |
-| Pack purchase | `pack:{studentId}:{versionId}` | One unlock per pack per student |
+| First solve of a puzzle | `solve:{studentId}:{puzzleId}` | No credit (replay) |
+| Daily goal hit | `goal:{studentId}:{date}` | No bonus |
+| 7-day streak | `streak:{studentId}:7` | No bonus |
+| Hint purchase | `hint:{attemptId}` | No charge, return revealed move |
+| Skip purchase | `skip:{attemptId}` | No charge, return already-SKIPPED |
+| Pack purchase | `pack:{studentId}:{versionId}` | No charge, return already-owned |
 
-The `CoinTransaction.idempotencyKey UNIQUE` constraint enforces all of these. A second insert with the same key fails — so even if a puzzle is solved via two different attempts (e.g. abandoned then re-solved), the ledger credits exactly once. The `refId` column still carries the `attemptId` for traceability.
+`refId` carries the `attemptId`/`versionId` for traceability regardless.
 
-### Spending — hint / skip / pack
-All three are conditional updates guarded by balance, and all append a ledger row **in the same transaction** as the balance decrement:
-1. **Hint (15 coins):** `POST /api/attempts/{id}/hint` → conditional `UPDATE Student SET coinBalance = coinBalance - 15 WHERE id = ? AND coinBalance >= 15`. If 0 rows → 402 insufficient. On success, append `CoinTransaction(-15, PURCHASE_HINT, "hint:{attemptId}")`, set `Attempt.usedHint = true`, and **respond with the next correct move** for the current `moveIndex` (the cursor does not advance — the student still must play it). Idempotent on `hint:{attemptId}`: a second hint call on the same attempt is a no-op that returns the already-revealed move without re-charging.
-2. **Skip (30 coins):** `POST /api/attempts/{id}/skip` → balance check + `CoinTransaction(-30, PURCHASE_SKIP, "skip:{attemptId}")`, then finalize as `SKIPPED` (neutral, see Failure). Idempotent on `skip:{attemptId}`.
-3. **Bonus pack (100 coins):** `POST /api/shop/pack/{versionId}` → balance check + `CoinTransaction(-100, PURCHASE_PACK, "pack:{studentId}:{versionId}")`, insert an `Unlock(type = BONUS_PACK, refId = versionId, remaining = null)`.
+### Spending — hint / skip / pack, all gated on status = PENDING
+Every spend is a single transaction that **first claims the attempt as PENDING**, then charges. This prevents the race where a concurrent solve finalizes the attempt between the balance check and the flag flip:
+
+1. **Hint (15 coins):** `POST /api/attempts/{id}/hint` with `{commandId}`. In one tx:
+   - `UPDATE Attempt SET "usedHint" = true WHERE id = ? AND status = 'PENDING' RETURNING "moveIndex"` (if 0 rows → attempt already finalized → `409 attempt_finalized`, no charge).
+   - If `usedHint` was already true, return the previously-revealed move without charging (idempotent).
+   - Ledger: `INSERT … ON CONFLICT ("hint:{attemptId}") DO NOTHING RETURNING id`. If row returned, decrement `coinBalance` (conditional `>= 15`). If 0 rows, the hint was already purchased — return the move.
+   - Record `AcceptedCommand(commandId, "hint", {move: solutionMoves[moveIndex]})`. Respond with the revealed move (cursor does not advance).
+2. **Skip (30 coins):** `POST /api/attempts/{id}/skip` with `{commandId}`. In one tx:
+   - `UPDATE Attempt SET status='SKIPPED', "usedSkip"=true, "finalizedAt"=now() WHERE id=? AND status='PENDING' RETURNING id` (0 rows → `409 attempt_finalized`).
+   - Ledger `skip:{attemptId}` `ON CONFLICT DO NOTHING RETURNING`; if returned, decrement balance (conditional `>= 30`).
+   - Delete the reservation. Record `AcceptedCommand`. No Elo, no `StudentPuzzle`, streak-neutral.
+3. **Bonus pack (100 coins):** `POST /api/shop/pack/{versionId}`. `ON CONFLICT ("pack:{studentId}:{versionId}") DO NOTHING RETURNING`; if returned, decrement balance (conditional `>= 100`) and `INSERT Unlock(type=BONUS_PACK, refId=versionId, remaining=null)`. If 0 rows, already owned → return success.
 
 ### Concurrency summary (what makes each path safe)
 | Race | Guard |
 |---|---|
-| Double `/next` → two rewardable attempts | Puzzle-row / `AssignmentItemProgress` lock inside the issuance tx; `StudentPuzzle` as claim |
-| Parallel move submissions on one attempt | `WHERE status = PENDING AND moveIndex = expected` conditional update |
-| Double finalize of one attempt | `WHERE status = PENDING` conditional update; `finalizedAt` set once |
-| Same puzzle solved via two attempts | Entitlement key `solve:{studentId}:{puzzleId}` (UNIQUE) |
-| Cross-attempt concurrent finalize corrupting rating/counts | `inAppRating` updated by signed delta via conditional `UPDATE … SET inAppRating = inAppRating + :delta`; `DailyProgress.solvedCount += 1` via conditional increment — both atomic |
-| Double hint/skip charge | `hint:{attemptId}` / `skip:{attemptId}` UNIQUE keys |
+| Double `/next` → two attempts same student | `SELECT … FOR UPDATE` on Student row during issuance (single-flight per student) |
+| Same assignment item issued twice | Reservation row with `assignmentItemId` uniqueness within the tx |
+| Parallel commands on one attempt (any kind) | `AcceptedCommand(attemptId, commandId)` UNIQUE; `WHERE status='PENDING' AND revision=expected` |
+| Duplicate HTTP retry (network blip) | `commandId` replay returns stored result, no re-execution |
+| Double finalize of one attempt | `WHERE status='PENDING'` conditional update |
+| Same puzzle solved via two attempts | Entitlement key `solve:{studentId}:{puzzleId}` + `ON CONFLICT DO NOTHING RETURNING` |
+| Cross-attempt concurrent finalize corrupting rating | `SELECT … FOR UPDATE` on Student row before any Elo write |
+| Replay-solve inflating rating | `isReplay` flag → rating step skipped entirely |
+| Hint/skip charging on a finalized attempt | `... WHERE status='PENDING' RETURNING` gates the charge in the same tx |
+| Double hint/skip/pack charge | Entitlement keys + `ON CONFLICT DO NOTHING RETURNING` |
 | Insufficient funds on spend | `WHERE coinBalance >= cost` conditional update |
-| Invite over-redemption | `UPDATE InviteCode SET uses = uses + 1 WHERE id = ? AND uses < maxUses` (0 rows → rejected) |
+| Invite over-redemption | `UPDATE InviteCode SET uses = uses + 1 WHERE id = ? AND uses < "maxUses"` (0 rows → rejected) |
+| Abandonment poisoning anti-repeat | `StudentPuzzle` written only on SOLVED, not at issuance |
 
 ## Puzzle Selection Logic
 
@@ -534,22 +632,24 @@ A documented Elo (not "simplified Glicko" hand-wave). External and in-app rating
 
 - Expected score: `E = 1 / (1 + 10^((puzzleRating - inAppRating)/400))`
 - Update: `inAppRating += K * (actual - E)`, where `actual ∈ {1 win, 0 loss}` and `K = ratingK`.
-- `ratingK` starts at 40 and steps down as attempts accrue (40 → 32 → 24 at 30/100/300 solves), so early volatility calms over time.
+- `ratingK` starts at 40 and steps down as terminal attempts accrue (40 → 32 → 24 at 30/100/300 rated attempts), so early volatility calms over time.
 - `puzzleRating` is the puzzle's stored Lichess rating (a fixed property of the puzzle, not the student).
+- **Replay solves do not affect rating.** Only the first terminal presentation of a (student, puzzle) pair produces a `RatingEvent`. A replay solve (`Attempt.isReplay = true`) skips the Elo step entirely. There is no separate "attenuated K" — replays are simply not rated. This is verified by test gate #5.
+- All rating updates are serialized by `SELECT … FOR UPDATE` on the `Student` row inside the finalize transaction, so two concurrent finalizes (different attempts) cannot apply conflicting deltas to the same `inAppRating`.
 - Nightly Lichess sync updates `lichessPuzzleRating`/`lichessGameRating` **only** — never touches `inAppRating`.
 
 ## Gamification Rules
 
 ### Earning (append-only ledger entries)
-| Event | Coins | Idempotency key (business-level) |
-|---|---|---|
-| Solve (no hint) | +10 | `solve:{studentId}:{puzzleId}` |
-| Solve with hint | +5 | `solve:{studentId}:{puzzleId}` |
-| Fail | 0 | — (but Elo applies `actual = 0`) |
-| Hit daily goal | +50 | `goal:{studentId}:{date}` |
-| 7-day streak milestone | +100 | `streak:{studentId}:7` |
+| Event | Coins | Idempotency key | Effect on collision |
+|---|---|---|---|
+| Solve (no hint) | +10 | `solve:{studentId}:{puzzleId}` | No credit; `isReplay=true`; no rating change |
+| Solve with hint | +5 | `solve:{studentId}:{puzzleId}` | (same) |
+| Fail | 0 | — | Elo applies `actual = 0` (first fail of the pair only) |
+| Hit daily goal | +50 | `goal:{studentId}:{date}` | No bonus |
+| 7-day streak milestone | +100 | `streak:{studentId}:7` | No bonus |
 
-**The solve reward is keyed on the puzzle, not the attempt** — abandoning and re-opening the same puzzle cannot double-credit. Failures award no coins but the attempt's `actual = 0` feeds the Elo update so the rating can move down. Retries are allowed; a replay-solve of an already-solved puzzle awards no coins and attenuated Elo (flagged `isReplay` via `StudentPuzzle.timesSeen`).
+**The solve reward is keyed on the puzzle, not the attempt** — abandoning and re-opening the same puzzle cannot double-credit, and a replay-solve credits nothing and doesn't affect rating. Failures award no coins but feed `actual = 0` into Elo so the rating can move down (first fail of the pair only). All ledger inserts use `ON CONFLICT (idempotencyKey) DO NOTHING RETURNING id` — a returned row means "first time, apply the balance delta"; no row means "already happened, skip."
 
 ### Spending (conditional updates, balance ≥ cost)
 | Power-up | Cost | Effect |
@@ -637,21 +737,26 @@ For each linked student, `GET /api/user/{username}` (public, no token) → refre
 ## Verification Gates (tests to write before "done")
 
 1. **Double finalize:** two simultaneous finalizes of the same attempt grant exactly one reward and one progress update (conditional `status` update).
-2. **Parallel moves:** two concurrent move submissions on one attempt — exactly one advances the cursor, the other gets `409 expected_index_mismatch`.
-3. **Double `/next`:** two parallel puzzle fetches never create two rewardable attempts for the same puzzle/assignment slot.
-4. **Entitlement, not attempt:** abandon a puzzle, re-open it, solve it — the solve coins credit exactly once (keyed `solve:{studentId}:{puzzleId}`).
-5. **Rating goes down:** a FAILED attempt applies Elo with `actual = 0` and `inAppRating` decreases; infinite retries cannot inflate rating without bound.
-6. **Retries:** a failed puzzle can be retried; it appears independently in an assignment's progress.
-7. **Authorization:** cross-tutor and cross-student IDs always return 404.
-8. **Streaks:** correct across local midnight and DST transitions (fixed-clock test with tz-aware dates).
-9. **Queue fallback:** an exhausted rating window widens, then falls back to least-recently-seen, then "queue complete" — deterministically.
-10. **Lichess resilience:** 429 responses and interrupted imports resume without duplicate puzzles or duplicate rewards.
-11. **Init guard:** linking Lichess after earning an in-app rating does not overwrite `inAppRating`.
-12. **Solve integrity:** a client-submitted move is validated server-side; the solution is never present in any response payload.
-13. **Spending atomicity:** a hint/skip/pack purchase with insufficient balance fails with no partial state (no ledger row, no flag flip).
-14. **Hint idempotency:** a second hint on the same attempt returns the already-revealed move without re-charging.
-15. **Invite atomicity:** concurrent redemptions cannot enroll more students than `maxUses`.
-16. **Ledger integrity:** for any student, `SUM(CoinTransaction.amount) = coinBalance` and `SUM(amount WHERE amount > 0) = lifetimeCoins` after randomized concurrent earn/spend operations.
+2. **Parallel moves:** two concurrent move submissions on one attempt — exactly one advances `revision`, the other gets `409 revision_mismatch`.
+3. **Command retry idempotency:** the same `commandId` submitted twice (network retry) returns the same result and does not double-count a wrong move toward `FAIL_LIMIT`.
+4. **Double `/next`:** two parallel puzzle fetches never create two PENDING attempts for the same student (student-row lock + partial unique index).
+5. **Entitlement, not attempt:** abandon a puzzle, re-open it, solve it — the solve coins credit exactly once (keyed `solve:{studentId}:{puzzleId}`, `ON CONFLICT DO NOTHING RETURNING`).
+6. **Replay neutrality:** solving an already-solved puzzle sets `isReplay=true`, awards no coins, and creates no `RatingEvent` (rating unchanged).
+7. **Rating goes down:** a FAILED attempt applies Elo with `actual = 0` and `inAppRating` decreases (first fail of the pair).
+8. **Rating serialization:** two concurrent finalizes of *different* attempts (same student) produce two `RatingEvent`s whose deltas sum correctly (no lost update).
+9. **Retries:** a failed puzzle can be retried; it appears independently in an assignment's progress.
+10. **Authorization:** cross-tutor and cross-student IDs always return 404.
+11. **Streaks:** correct across local midnight and DST transitions (fixed-clock test with tz-aware dates).
+12. **Queue fallback:** an exhausted rating window widens, then falls back to least-recently-seen, then "queue complete" — deterministically.
+13. **Abandonment cleanliness:** an abandoned attempt leaves no `StudentPuzzle` row (the puzzle can be re-served and anti-repeat freshness is intact).
+14. **Lichess resilience:** 429 responses and interrupted imports resume without duplicate puzzles or duplicate rewards.
+15. **Init guard:** linking Lichess after earning an in-app rating does not overwrite `inAppRating`.
+16. **Solve integrity:** a client-submitted move is validated server-side; the solution is never present in any response payload.
+17. **Spend/finalize race:** a hint or skip request arriving concurrently with a solve finalization either charges-and-sets-flags or is rejected `409 attempt_finalized` — never charges on an already-finalized attempt.
+18. **Spending atomicity:** a hint/skip/pack purchase with insufficient balance fails with no partial state (no ledger row, no flag flip).
+19. **Hint idempotency:** a second hint on the same attempt returns the already-revealed move without re-charging.
+20. **Invite atomicity:** concurrent redemptions cannot enroll more students than `maxUses`.
+21. **Ledger integrity:** for any student, `SUM(CoinTransaction.amount) = coinBalance` and `SUM(amount WHERE amount > 0) = lifetimeCoins` after randomized concurrent earn/spend operations.
 
 ## Open Questions / Future
 
