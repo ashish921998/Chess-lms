@@ -61,9 +61,10 @@ function buildPuzzle(raw: RawPuzzle): {
 } {
   const game = new Chess(raw.fenBeforeSetup);
 
-  // Apply opponent setup move (first ply of the line).
+  // Apply opponent setup move (first ply of the line). chess.js v1.4 parses
+  // plain UCI strings directly via the string overload.
   const setupUci = raw.fullLine[0];
-  const setupMove = game.move(setupUci, { sloppy: true });
+  const setupMove = game.move(setupUci);
   if (!setupMove) {
     throw new Error(`Puzzle ${raw.id}: illegal setup move "${setupUci}" from FEN ${raw.fenBeforeSetup}`);
   }
@@ -74,7 +75,7 @@ function buildPuzzle(raw: RawPuzzle): {
   // legal AND (for these seed puzzles) deliver checkmate or continue the line.
   const verifier = new Chess(startFen);
   for (const ply of solutionMoves) {
-    const ok = verifier.move(ply, { sloppy: true });
+    const ok = verifier.move(ply);
     if (!ok) {
       throw new Error(`Puzzle ${raw.id}: illegal ply "${ply}" in solution from ${startFen}`);
     }
