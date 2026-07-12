@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Chess Tutor LMS
 
-## Getting Started
+A learning management system for a chess tutor and their students. Students solve Lichess puzzles calibrated to their level; the solve is validated server-side; coins are awarded through an idempotent ledger.
 
-First, run the development server:
+## Status
+
+**Milestone 1 (core solve loop)** — complete. Students sign up with an invite code, log in, solve puzzles on an interactive board, and earn coins. The tutor is seeded administratively.
+
+Lichess OAuth, the auto-queue, tutor puzzle-set CRUD, gamification (streaks/badges/leaderboard), and the spend economy land in later milestones. See `docs/superpowers/specs/2026-07-11-chess-lms-design.md` and `docs/superpowers/plans/`.
+
+## Quick start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+pnpm db:up          # Postgres in Docker (port 5433)
+cp .env.example .env  # then set AUTH_SECRET (openssl rand -base64 32)
+pnpm db:migrate
+pnpm db:seed        # creates tutor@example.com / password123 + invite CHESSCLASS + 3 puzzles
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **Tutor login:** `tutor@example.com` / `password123` (redirects to `/roster` — not built in M1)
+- **Student signup:** `/signup` with invite code `CHESSCLASS`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Tests
 
-## Learn More
+```bash
+pnpm db:up          # ensure Postgres is running
+pnpm test
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Architecture
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Server-authoritative solve:** the client posts a move + cursor; the server validates against the stored solution and conditionally finalizes the attempt. The solution is never sent to the browser.
+- **Idempotent rewards:** coin credits are keyed on a puzzle-level entitlement (`solve:{studentId}:{puzzleId}`), so abandoning and re-solving a puzzle can't double-credit. Ledger inserts use `ON CONFLICT DO NOTHING RETURNING`.
+- **Concurrency:** parallel move submissions are serialized by a conditional `WHERE status = 'PENDING' AND revision = expected` update. One PENDING attempt per student (partial unique index).
+- **Rating:** documented Elo with K-factor. Replay solves skip Elo entirely. External (Lichess) and in-app ratings are kept separate.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+See the [design spec](docs/superpowers/specs/2026-07-11-chess-lms-design.md) for the full model.
 
-## Deploy on Vercel
+## Tech stack
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Next.js 16 (App Router) + TypeScript
+- PostgreSQL 16 (Docker) via Prisma 7 (pg driver adapter)
+- Better Auth (email/password, server-only role field)
+- react-chessboard v5 + chess.js v1.4
+- Tailwind CSS v4
+- Vitest
