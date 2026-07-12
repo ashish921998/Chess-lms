@@ -6,8 +6,13 @@ import { SignOutButton } from "./sign-out-button";
 
 export const dynamic = "force-dynamic";
 
-export default async function Dashboard() {
+export default async function Dashboard({
+  searchParams,
+}: {
+  searchParams: Promise<{ queue?: string }>;
+}) {
   const me = await requireStudent();
+  const params = await searchParams;
   const student = await db.student.findUniqueOrThrow({
     where: { id: me.id },
     include: {
@@ -47,6 +52,13 @@ export default async function Dashboard() {
         <StatCard label="Coins" value={student.coinBalance} />
         <StatCard label="Solved" value={solvedCount} />
       </section>
+
+      {params.queue === "complete" && (
+        <p className="text-amber-700 text-sm bg-amber-50 rounded px-3 py-2">
+          You've solved all available puzzles in your rating range! Try again later —
+          new puzzles may be added, or your rating may shift the window.
+        </p>
+      )}
 
       <section>
         <div className="flex justify-between items-center mb-3">
