@@ -25,6 +25,9 @@ export default async function StudentLayout({
               <Link href="/practice" className="text-slate-600 hover:text-slate-900">
                 Practice
               </Link>
+              <Link href="/profile" className="text-slate-600 hover:text-slate-900">
+                Profile
+              </Link>
             </nav>
           </div>
           <div className="text-sm text-slate-500">
