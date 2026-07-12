@@ -1,0 +1,21 @@
+docs/superpowers/specs/2026-07-11-chess-lms-design.md
+  s_644136791f9416::t_43003143057bc2 429-432
+  s_644136791f9416::t_f442b571ed997f 428
+  s_644136791f9416::t_f5e2f0756456ab 433-435
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "7205bce947690ef1e00948cab52799995f89c286",
+  "prompts": {},
+  "sessions": {
+    "s_644136791f9416": {
+      "agent_id": {
+        "tool": "amp",
+        "id": "TU-033o18PYKGj6MYwAL6FeOv",
+        "model": "unknown"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
