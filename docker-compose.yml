@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: chess
       POSTGRES_DB: chess
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - chess_pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d

@@ -1,0 +1,371 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Better Auth tables ───
+// These follow Better Auth's expected schema shapes. `role` is an additional
+// field set server-side only (input: false in auth config) so clients can't
+// self-elevate to TUTOR.
+model User {
+  id            String    @id
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  name          String?
+  image         String?
+  role          String    @default("STUDENT") // "TUTOR" | "STUDENT" — server-set
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  tutor         Tutor?
+  student       Student?
+}
+
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+}
+
+model Account {
+  id                String    @id
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerId        String    // "credential" for email/password
+  accountId         String
+  accessToken       String?
+  refreshToken      String?
+  expiresAt         DateTime?
+  password          String?   // Better Auth credential plugin stores hash here
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// ─── Tutor & Student profiles (1:1 with User) ───
+model Tutor {
+  id        String      @id @default(cuid())
+  userId    String      @unique
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  students  Student[]
+  sets      PuzzleSet[]
+  invites   InviteCode[]
+  createdAt DateTime    @default(now())
+}
+
+model Student {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tutorId           String
+  tutor             Tutor    @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  displayName       String                         // shown on leaderboard, never email
+  timezone          String   @default("UTC")       // IANA tz for daily boundaries
+  createdAt         DateTime @default(now())
+
+  // ratings — external (Lichess prior) and in-app (actual skill) kept SEPARATE
+  lichessPuzzleRating Int?                         // pulled at link time, periodic sync
+  lichessGameRating   Int?                         // rapid → blitz fallback
+  inAppRating         Int   @default(1500)         // Elo, updated by server on each solve
+  ratingK             Int   @default(40)           // K-factor, decreases as games accrue
+
+  // gamification balances (caches over CoinTransaction — see ledger)
+  coinBalance         Int   @default(0)            // spendable
+  lifetimeCoins       Int   @default(0)            // leaderboard, never decreases
+  dailyGoal           Int   @default(5)            // tutor-set
+
+  lichess         LichessConnection?
+  attempts        Attempt[]
+  seenPuzzles     StudentPuzzle[]
+  dailyProgress   DailyProgress[]
+  assignments     Assignment[]
+  badges          StudentBadge[]
+  coinTxns        CoinTransaction[]
+  ratingEvents    RatingEvent[]
+}
+
+model LichessConnection {
+  id              String   @id @default(cuid())
+  studentId       String   @unique
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lichessId       String   @unique
+  lichessUsername String
+  // token is used once to read ratings, then discarded. Ratings are public.
+  lastSyncedAt    DateTime?
+}
+
+model InviteCode {
+  id        String    @id @default(cuid())
+  tutorId   String
+  tutor     Tutor     @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  code      String    @unique               // crypto-generated random string
+  uses      Int       @default(0)
+  maxUses   Int       @default(1)
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+}
+
+// ─── Puzzle library ───
+// At import time the FIRST UCI move (the opponent's setup move) is APPLIED to
+// the FEN, so `startFen` is the position the student actually plays from.
+// `solutionMoves` begins with the student's first move (includes opponent replies).
+model Puzzle {
+  id            String   @id
+  startFen      String                       // AFTER opponent setup move applied
+  solutionMoves String[]                     // student + opponent plies, UCI, in order
+  rating        Int                          // Lichess puzzle rating (prior only)
+  ratingDev     Int      @default(80)
+  themes        String[] @default([])
+  openingTags   String[] @default([])
+  popularity    Int      @default(0)
+  importedAt    DateTime @default(now())
+
+  setItems         PuzzleSetItem[]
+  setVersionItems  PuzzleSetVersionItem[]
+  attempts         Attempt[]
+  seenBy           StudentPuzzle[]
+  assignmentItems  AssignmentItemProgress[]
+
+  @@index([rating])
+  @@index([popularity])
+}
+
+// Anti-repeat + "seen" state (one record per student+puzzle, written only on SOLVED)
+model StudentPuzzle {
+  studentId  String
+  puzzleId   String
+  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  puzzle     Puzzle   @relation(fields: [puzzleId], references: [id], onDelete: Cascade)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @updatedAt
+  timesSeen   Int      @default(1)
+
+  @@id([studentId, puzzleId])
+  @@index([studentId, lastSeenAt])
+}
+
+// ─── Tutor sets: manual puzzle selection, published as immutable versions ───
+model PuzzleSet {
+  id          String         @id @default(cuid())
+  tutorId     String
+  tutor       Tutor          @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  isPublished Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+
+  items    PuzzleSetItem[]
+  versions PuzzleSetVersion[]
+
+  @@index([tutorId])
+}
+
+model PuzzleSetItem {
+  id        String    @id @default(cuid())
+  setId     String
+  set       PuzzleSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  puzzleId  String
+  puzzle    Puzzle    @relation(fields: [puzzleId], references: [id])
+  order     Int
+
+  @@unique([setId, order])
+  @@index([setId])
+}
+
+// Immutable snapshot created at publish time. Assignments reference a version,
+// so later edits to the set never mutate an in-flight assignment's contents.
+// Deletion is RESTRICT once any assignment references it.
+model PuzzleSetVersion {
+  id        String   @id @default(cuid())
+  setId     String
+  set       PuzzleSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  version   Int                                  // monotonic per set
+  createdAt DateTime @default(now())
+
+  items       PuzzleSetVersionItem[]
+  assignments Assignment[]
+
+  @@unique([setId, version])
+}
+
+model PuzzleSetVersionItem {
+  id          String           @id @default(cuid())
+  versionId   String
+  version     PuzzleSetVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  puzzleId    String
+  puzzle      Puzzle           @relation(fields: [puzzleId], references: [id])
+  order       Int
+
+  @@unique([versionId, order])
+  @@unique([versionId, puzzleId])
+  @@index([versionId])
+}
+
+model Assignment {
+  id          String           @id @default(cuid())
+  versionId   String
+  version     PuzzleSetVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  studentId   String
+  student     Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  dueDate     DateTime?
+  createdAt   DateTime         @default(now())
+  progress    Int              @default(0)       // denormalized; derived from items
+  completed   Boolean          @default(false)   // denormalized; derived from items
+  items       AssignmentItemProgress[]
+  attempts    Attempt[]
+
+  @@unique([versionId, studentId])
+  @@index([studentId])
+}
+
+// Per-item progress, materialized at assignment creation (one per version item).
+model AssignmentItemProgress {
+  id            String     @id @default(cuid())
+  assignmentId  String
+  assignment    Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  puzzleId      String
+  puzzle        Puzzle     @relation(fields: [puzzleId], references: [id], onDelete: Cascade)
+  order         Int
+  solved        Boolean    @default(false)
+  attempts      Int        @default(0)
+  firstSolvedAt DateTime?
+
+  @@unique([assignmentId, puzzleId])
+  @@index([assignmentId])
+}
+
+// ─── Attempts: one record PER PRESENTATION (not per puzzle) ───
+// State machine: PENDING → {SOLVED | FAILED | SKIPPED | ABANDONED}, terminal.
+// The PENDING Attempt itself is the issuance reservation — no separate table.
+// One PENDING per student enforced by partial unique index (see migration):
+//   CREATE UNIQUE INDEX one_pending_attempt ON "Attempt"("studentId") WHERE status = 'PENDING'
+enum AttemptStatus {
+  PENDING
+  SOLVED
+  FAILED
+  SKIPPED
+  ABANDONED
+}
+
+model Attempt {
+  id              String        @id @default(cuid())
+  studentId       String
+  student         Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  puzzleId        String
+  puzzle          Puzzle        @relation(fields: [puzzleId], references: [id])
+  assignmentId    String?
+  assignment      Assignment?   @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+  assignmentItemId String?                      // which AssignmentItemProgress this serves
+  status          AttemptStatus @default(PENDING)
+  moveIndex       Int           @default(0)     // cursor: next solution ply the student owes
+  revision        Int           @default(0)     // increments per accepted command (concurrency guard)
+  solved          Boolean       @default(false) // true iff status = SOLVED
+  usedHint        Boolean       @default(false)
+  hintMove        String?                        // the revealed move (one hint per attempt)
+  usedSkip        Boolean       @default(false)
+  failCount       Int           @default(0)
+  isReplay        Boolean       @default(false) // set at issuance if puzzle already in StudentPuzzle
+  coinsAwarded    Int           @default(0)
+  timeSpentMs     Int?
+  createdAt       DateTime      @default(now())
+  finalizedAt     DateTime?
+
+  ratingEvent     RatingEvent?
+
+  @@index([studentId, createdAt])
+  @@index([puzzleId])
+  @@index([assignmentId])
+  @@index([status])
+}
+
+// ─── Daily goals & streaks (timezone-correct) ───
+model DailyProgress {
+  studentId        String
+  date             DateTime @db.Date           // local date (date-only), not a timestamp
+  student          Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  solvedCount      Int      @default(0)
+  goalMet          Boolean  @default(false)
+  goalBonusAwarded Boolean  @default(false)    // idempotency flag
+
+  @@id([studentId, date])
+  @@index([date])
+}
+
+// ─── Gamification: append-only ledger + badges ───
+// BALANCES ARE CACHES, derived from the ledger by two distinct invariants:
+//   coinBalance   = SUM(amount)                          // signed: spends reduce it
+//   lifetimeCoins = SUM(amount) WHERE amount > 0          // earnings only, never decreases
+// Every credit AND every debit appends a ledger row in the SAME transaction
+// that mutates the balance. Ledger inserts use ON CONFLICT ("idempotencyKey")
+// DO NOTHING RETURNING id — NOT Prisma create(), which throws and aborts on collision.
+enum CoinReason {
+  SOLVE
+  SOLVE_HINTED
+  GOAL_BONUS
+  STREAK_BONUS
+  PURCHASE_HINT
+  PURCHASE_SKIP
+}
+
+model CoinTransaction {
+  id             String     @id @default(cuid())
+  studentId      String
+  student        Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  amount         Int                                 // +earn / -spend (always signed)
+  reason         CoinReason
+  idempotencyKey String   @unique                   // business key — see Entitlement Keys
+  refId          String?                             // attemptId / assignmentId
+  createdAt      DateTime   @default(now())
+
+  @@index([studentId, createdAt])
+}
+
+model StudentBadge {
+  id        String   @id @default(cuid())
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  badgeKey  String
+  awardedAt DateTime @default(now())
+
+  @@unique([studentId, badgeKey])
+}
+
+// ─── Rating history for dashboard trend charts ───
+enum RatingOutcome {
+  SOLVED
+  FAILED
+}
+
+model RatingEvent {
+  id        String        @id @default(cuid())
+  studentId String
+  student   Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  rating    Int                                     // snapshot of inAppRating after the attempt
+  outcome   RatingOutcome
+  delta     Int                                     // signed change applied this event
+  attemptId String        @unique                   // 1:1 with the attempt
+  attempt   Attempt      @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+
+  @@index([studentId, createdAt])
+}
