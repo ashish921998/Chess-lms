@@ -31,6 +31,18 @@ export default async function SetEditorPage({
   });
   if (!set || set.tutorId !== tutor.id) notFound();
 
+  // Distinct theme values across the library, for the FILTER editor's checkboxes
+  // (only fetched when the set is FILTER; MANUAL never renders them).
+  const availableThemes =
+    set.mode === "FILTER"
+      ? await db.$queryRaw<{ theme: string }[]>`
+          SELECT DISTINCT t.theme
+          FROM "Puzzle" p, unnest(p.themes) AS t(theme)
+          WHERE t.theme <> ''
+          ORDER BY t.theme
+        `.then((rows) => rows.map((r) => r.theme))
+      : [];
+
   return (
     <div className="space-y-6">
       <div>
@@ -90,6 +102,7 @@ export default async function SetEditorPage({
           ratingMax: set.filterRatingMax,
           targetCount: set.targetCount,
         }}
+        availableThemes={availableThemes}
       />
     </div>
   );

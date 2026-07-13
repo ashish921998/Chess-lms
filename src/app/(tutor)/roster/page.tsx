@@ -41,6 +41,18 @@ export default async function RosterPage() {
     },
   });
 
+  // Active (uncompleted) assignment count per student — the "active count" in
+  // the roster summary (spec §Tutor pages). `take: 5` on the include above
+  // prevents deriving it from the included set, so it's a separate groupBy.
+  const activeGroups = await db.assignment.groupBy({
+    by: ["studentId"],
+    where: { student: { tutorId: tutor.id }, completed: false },
+    _count: { _all: true },
+  });
+  const activeCountByStudent = new Map(
+    activeGroups.map((g) => [g.studentId, g._count._all])
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -62,6 +74,11 @@ export default async function RosterPage() {
                 <div>
                   <span className="font-medium">{s.displayName}</span>
                   <span className="ml-3 text-sm text-slate-500">Rating {s.inAppRating}</span>
+                  {activeCountByStudent.has(s.id) && (
+                    <span className="ml-3 text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded">
+                      {activeCountByStudent.get(s.id)} active
+                    </span>
+                  )}
                 </div>
                 <span className="text-sm text-slate-500">
                   {s.attempts[0]

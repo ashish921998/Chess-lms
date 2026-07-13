@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getTutorActor } from "@/lib/auth-guards";
-import { addPuzzleItemTx, removePuzzleItemTx, tutorErrorResponse } from "@/lib/tutor/sets";
+import {
+  addPuzzleItemTx,
+  removePuzzleItemTx,
+  reorderItemsTx,
+  tutorErrorResponse,
+} from "@/lib/tutor/sets";
 
 /**
  * POST /api/tutor/sets/[setId]/items — add a puzzle to a MANUAL set's draft.
- * Body: { puzzleId }
+ * Body: { puzzleId: string }
  */
 export async function POST(
   req: NextRequest,
@@ -23,6 +28,33 @@ export async function POST(
   try {
     const item = await db.$transaction((tx) => addPuzzleItemTx(tx, tutor, setId, body.puzzleId));
     return NextResponse.json({ id: item.id, order: item.order }, { status: 201 });
+  } catch (e) {
+    const res = tutorErrorResponse(e);
+    if (res) return NextResponse.json(res.body, { status: res.status });
+    throw e;
+  }
+}
+
+/**
+ * PATCH /api/tutor/sets/[setId]/items — reorder MANUAL items to match the given
+ * puzzleId sequence. Body: { orderedPuzzleIds: string[] }
+ */
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ setId: string }> }
+) {
+  const tutor = await getTutorActor();
+  if (!tutor) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const { setId } = await params;
+  const body = await req.json().catch(() => null);
+  if (!body || !Array.isArray(body.orderedPuzzleIds)) {
+    return NextResponse.json({ error: "orderedPuzzleIds[] required" }, { status: 400 });
+  }
+
+  try {
+    await db.$transaction((tx) => reorderItemsTx(tx, tutor, setId, body.orderedPuzzleIds));
+    return NextResponse.json({ ok: true });
   } catch (e) {
     const res = tutorErrorResponse(e);
     if (res) return NextResponse.json(res.body, { status: res.status });

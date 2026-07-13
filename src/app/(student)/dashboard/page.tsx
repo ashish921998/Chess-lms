@@ -53,6 +53,26 @@ export default async function Dashboard({
     },
   });
 
+  // Replay solves per assignment: SOLVED attempts serving this assignment where
+  // the puzzle was already globally solved (isReplay). Surfaced as
+  // "Completed — N replays" so the student understands low coin gain on FILTER
+  // assignments (spec §FILTER replay UX).
+  const replayGroups = await db.attempt.groupBy({
+    by: ["assignmentId"],
+    where: {
+      studentId: me.id,
+      status: "SOLVED",
+      isReplay: true,
+      assignmentId: { not: null },
+    },
+    _count: { _all: true },
+  });
+  const replayCountByAssignment = new Map(
+    replayGroups
+      .filter((g) => g.assignmentId !== null)
+      .map((g) => [g.assignmentId as string, g._count._all])
+  );
+
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-start">
@@ -97,7 +117,15 @@ export default async function Dashboard({
                       <div className="text-sm text-slate-500 mt-0.5">
                         {a.progress}/{total}{" "}
                         {a.version.mode === "FILTER" ? "solved" : "puzzles"}
-                        {a.completed && <span className="text-green-700"> · done</span>}
+                        {a.completed && (
+                          <span className="text-green-700">
+                            {replayCountByAssignment.get(a.id)
+                              ? ` · done (${replayCountByAssignment.get(a.id)} replay${
+                                  replayCountByAssignment.get(a.id) === 1 ? "" : "s"
+                                })`
+                              : " · done"}
+                          </span>
+                        )}
                       </div>
                     </div>
                     {a.dueDate && (

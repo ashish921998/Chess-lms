@@ -122,6 +122,78 @@ export async function removePuzzleItemTx(
 }
 
 /**
+ * Reorder a MANUAL set's items to match the given puzzleId sequence (0-indexed).
+ * Two-phase write avoids the `@@unique([setId, order])` transient-collision: first
+ * bump every order by a large offset, then compact to the final 0..n-1 values.
+ * Validates the provided puzzleIds exactly match the set's current items.
+ */
+export async function reorderItemsTx(
+  tx: PrismaTransaction,
+  tutor: ActorTutor,
+  setId: string,
+  orderedPuzzleIds: string[]
+) {
+  const set = await getOwnedSetOrThrow(tx, tutor, setId);
+  if (set.mode !== "MANUAL") {
+    throw new ValidationError("FILTER sets do not hold puzzle items");
+  }
+
+  const items = await tx.puzzleSetItem.findMany({ where: { setId } });
+  const currentIds = new Set(items.map((i) => i.puzzleId));
+  const orderedIds = new Set(orderedPuzzleIds);
+  if (currentIds.size !== orderedIds.size || [...currentIds].some((id) => !orderedIds.has(id))) {
+    throw new ValidationError("ordered puzzleIds must match the set's current items");
+  }
+
+  const OFFSET = 1_000_000;
+  const byPuzzleId = new Map(items.map((i) => [i.puzzleId, i.id]));
+  // Phase 1: shift to offset+index so no row collides with a not-yet-written order.
+  for (let i = 0; i < orderedPuzzleIds.length; i++) {
+    await tx.puzzleSetItem.update({
+      where: { id: byPuzzleId.get(orderedPuzzleIds[i])! },
+      data: { order: OFFSET + i },
+    });
+  }
+  // Phase 2: compact to 0..n-1.
+  for (let i = 0; i < orderedPuzzleIds.length; i++) {
+    await tx.puzzleSetItem.update({
+      where: { id: byPuzzleId.get(orderedPuzzleIds[i])! },
+      data: { order: i },
+    });
+  }
+}
+
+/**
+ * Search the puzzle library for MANUAL add-by-search. Returns puzzles matching
+ * the rating range and/or theme overlap (themes empty ⇒ any), ordered by
+ * popularity, capped at `limit`. Read-only.
+ */
+export async function searchPuzzlesTx(
+  tx: PrismaTransaction,
+  opts: { ratingMin?: number | null; ratingMax?: number | null; themes?: string[]; limit?: number }
+) {
+  const { Prisma } = await import("@prisma/client");
+  const ratingMin = opts.ratingMin ?? null;
+  const ratingMax = opts.ratingMax ?? null;
+  const themes = opts.themes?.filter((t) => t.length > 0) ?? [];
+  const limit = Math.min(opts.limit ?? 50, 200);
+  const themeClause = themes.length > 0 ? Prisma.sql`AND p.themes && ${themes}::text[]` : Prisma.empty;
+
+  const rows = await tx.$queryRaw<
+    { id: string; rating: number; themes: string[]; popularity: number }[]
+  >`
+    SELECT p.id, p.rating, p.themes, p.popularity
+    FROM "Puzzle" p
+    WHERE (${ratingMin}::int IS NULL OR p.rating >= ${ratingMin}::int)
+      AND (${ratingMax}::int IS NULL OR p.rating <= ${ratingMax}::int)
+      ${themeClause}
+    ORDER BY p.popularity DESC
+    LIMIT ${limit}
+  `;
+  return rows;
+}
+
+/**
  * Publish: materialize an immutable `PuzzleSetVersion` from the current draft.
  *   - MANUAL → copy current `PuzzleSetItem`s to `PuzzleSetVersionItem`s, in order.
  *   - FILTER → freeze criteria onto the version; no items.

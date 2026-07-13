@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useCallback } from "react";
+import { useState, useTransition, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 type Mode = "MANUAL" | "FILTER";
@@ -25,6 +25,8 @@ type Props = {
     ratingMax: number | null;
     targetCount: number | null;
   };
+  /** Distinct theme values across the puzzle library, for the FILTER checkboxes. */
+  availableThemes: string[];
 };
 
 /**
@@ -40,6 +42,7 @@ export function SetEditor({
   latestVersion,
   manualItems,
   filter,
+  availableThemes,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -72,6 +75,7 @@ export function SetEditor({
         <FilterEditor
           setId={setId}
           initial={filter}
+          availableThemes={availableThemes}
           disabled={pending}
           onError={setError}
           onInfo={setInfo}
@@ -96,6 +100,8 @@ export function SetEditor({
 
 // ── MANUAL editor ──
 
+type SearchResult = { id: string; rating: number; themes: string[] };
+
 function ManualEditor({
   setId,
   items,
@@ -112,6 +118,13 @@ function ManualEditor({
   onChanged: () => void;
 }) {
   const [puzzleId, setPuzzleId] = useState("");
+  // Search box state.
+  const [sRatingMin, setSRatingMin] = useState("");
+  const [sRatingMax, setSRatingMax] = useState("");
+  const [sThemes, setSThemes] = useState("");
+  const [results, setResults] = useState<SearchResult[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const alreadyInSet = new Set(items.map((i) => i.puzzleId));
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -147,31 +160,144 @@ function ManualEditor({
     onChanged();
   }
 
-  return (
-    <section className="rounded-lg border bg-white p-6 space-y-4">
-      <h2 className="text-lg font-semibold">Puzzles ({items.length})</h2>
-      <form onSubmit={add} className="flex gap-2">
-        <input
-          value={puzzleId}
-          onChange={(e) => setPuzzleId(e.target.value)}
-          placeholder="Puzzle ID"
-          className="flex-1 border rounded px-3 py-2 font-mono text-sm"
-        />
-        <button
-          type="submit"
-          disabled={disabled || !puzzleId.trim()}
-          className="bg-slate-900 text-white rounded px-3 py-2 hover:bg-slate-800 disabled:opacity-50 text-sm"
-        >
-          Add
-        </button>
-      </form>
+  async function move(from: number, to: number) {
+    if (to < 0 || to >= items.length) return;
+    onError("");
+    const next = items.map((i) => i.puzzleId);
+    [next[from], next[to]] = [next[to], next[from]];
+    const res = await fetch(`/api/tutor/sets/${setId}/items`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderedPuzzleIds: next }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      onError(j.error || `Failed (${res.status})`);
+      return;
+    }
+    onChanged();
+  }
 
+  async function runSearch(e: React.FormEvent) {
+    e.preventDefault();
+    setSearching(true);
+    try {
+      const params = new URLSearchParams();
+      if (sRatingMin) params.set("ratingMin", sRatingMin);
+      if (sRatingMax) params.set("ratingMax", sRatingMax);
+      const themes = sThemes.split(",").map((t) => t.trim()).filter(Boolean);
+      if (themes.length) params.set("themes", themes.join(","));
+      const res = await fetch(`/api/tutor/puzzles/search?${params}`);
+      if (res.ok) {
+        const { puzzles } = await res.json();
+        setResults(puzzles);
+      }
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border bg-white p-6 space-y-6">
+      <h2 className="text-lg font-semibold">Puzzles ({items.length})</h2>
+
+      {/* Add by ID */}
+      <div>
+        <h3 className="text-sm font-medium text-slate-700 mb-2">Add by puzzle ID</h3>
+        <form onSubmit={add} className="flex gap-2">
+          <input
+            value={puzzleId}
+            onChange={(e) => setPuzzleId(e.target.value)}
+            placeholder="Puzzle ID"
+            className="flex-1 border rounded px-3 py-2 font-mono text-sm"
+          />
+          <button
+            type="submit"
+            disabled={disabled || !puzzleId.trim()}
+            className="bg-slate-900 text-white rounded px-3 py-2 hover:bg-slate-800 disabled:opacity-50 text-sm"
+          >
+            Add
+          </button>
+        </form>
+      </div>
+
+      {/* Search by rating/themes */}
+      <div className="border-t pt-4">
+        <h3 className="text-sm font-medium text-slate-700 mb-2">Or search the library</h3>
+        <form onSubmit={runSearch} className="space-y-2">
+          <div className="grid grid-cols-3 gap-2">
+            <input
+              value={sRatingMin}
+              onChange={(e) => setSRatingMin(e.target.value)}
+              type="number"
+              placeholder="Rating min"
+              className="border rounded px-3 py-2 text-sm"
+            />
+            <input
+              value={sRatingMax}
+              onChange={(e) => setSRatingMax(e.target.value)}
+              type="number"
+              placeholder="Rating max"
+              className="border rounded px-3 py-2 text-sm"
+            />
+            <input
+              value={sThemes}
+              onChange={(e) => setSThemes(e.target.value)}
+              placeholder="themes: a, b"
+              className="border rounded px-3 py-2 text-sm"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={searching}
+            className="border rounded px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
+          >
+            {searching ? "Searching…" : "Search"}
+          </button>
+        </form>
+
+        {results && (
+          <ul className="mt-3 divide-y rounded border max-h-64 overflow-auto">
+            {results.length === 0 ? (
+              <li className="p-3 text-sm text-slate-500">No puzzles match.</li>
+            ) : (
+              results.map((p) => {
+                const inSet = alreadyInSet.has(p.id);
+                return (
+                  <li key={p.id} className="flex items-center justify-between p-2">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-mono">{p.id}</span>
+                      <span className="bg-slate-100 text-slate-700 text-xs px-1.5 py-0.5 rounded">
+                        {p.rating}
+                      </span>
+                      {p.themes.slice(0, 2).map((t) => (
+                        <span key={t} className="bg-blue-50 text-blue-700 text-xs px-1.5 py-0.5 rounded">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => addFromSearch(p.id)}
+                      disabled={disabled || inSet}
+                      className="text-blue-600 text-sm hover:underline disabled:opacity-40"
+                    >
+                      {inSet ? "added" : "add"}
+                    </button>
+                  </li>
+                );
+              })
+            )}
+          </ul>
+        )}
+      </div>
+
+      {/* Ordered list with reorder controls */}
       {items.length === 0 ? (
-        <p className="text-sm text-slate-500">
-          No puzzles yet. Add puzzle IDs to build the set.
+        <p className="text-sm text-slate-500 border-t pt-4">
+          No puzzles yet. Add by ID or search above.
         </p>
       ) : (
-        <ol className="divide-y rounded border">
+        <ol className="divide-y rounded border border-t pt-0">
           {items.map((it, i) => (
             <li key={it.id} className="flex items-center justify-between p-3">
               <div className="flex items-center gap-3">
@@ -181,27 +307,58 @@ function ManualEditor({
                   {it.rating}
                 </span>
                 {it.themes.slice(0, 3).map((t) => (
-                  <span
-                    key={t}
-                    className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded"
-                  >
+                  <span key={t} className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded">
                     {t}
                   </span>
                 ))}
               </div>
-              <button
-                onClick={() => remove(it.puzzleId)}
-                disabled={disabled}
-                className="text-red-600 text-sm hover:underline disabled:opacity-50"
-              >
-                Remove
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => move(i, i - 1)}
+                  disabled={disabled || i === 0}
+                  className="text-slate-500 hover:text-slate-900 disabled:opacity-30 text-sm"
+                  title="Move up"
+                >
+                  ↑
+                </button>
+                <button
+                  onClick={() => move(i, i + 1)}
+                  disabled={disabled || i === items.length - 1}
+                  className="text-slate-500 hover:text-slate-900 disabled:opacity-30 text-sm"
+                  title="Move down"
+                >
+                  ↓
+                </button>
+                <button
+                  onClick={() => remove(it.puzzleId)}
+                  disabled={disabled}
+                  className="text-red-600 text-sm hover:underline disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
             </li>
           ))}
         </ol>
       )}
     </section>
   );
+
+  async function addFromSearch(id: string) {
+    onError("");
+    const res = await fetch(`/api/tutor/sets/${setId}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ puzzleId: id }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      onError(j.error || `Failed (${res.status})`);
+      return;
+    }
+    onInfo(`Added ${id}`);
+    onChanged();
+  }
 }
 
 // ── FILTER editor ──
@@ -209,6 +366,7 @@ function ManualEditor({
 function FilterEditor({
   setId,
   initial,
+  availableThemes,
   disabled,
   onError,
   onInfo,
@@ -216,17 +374,54 @@ function FilterEditor({
 }: {
   setId: string;
   initial: Props["filter"];
+  availableThemes: string[];
   disabled: boolean;
   onError: (m: string) => void;
   onInfo: (m: string) => void;
   onChanged: () => void;
 }) {
-  const [themes, setThemes] = useState(initial.themes.join(", "));
+  const [selectedThemes, setSelectedThemes] = useState<Set<string>>(
+    new Set(initial.themes)
+  );
   const [ratingMin, setRatingMin] = useState(initial.ratingMin?.toString() ?? "");
   const [ratingMax, setRatingMax] = useState(initial.ratingMax?.toString() ?? "");
   const [targetCount, setTargetCount] = useState(initial.targetCount?.toString() ?? "");
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [previewing, setPreviewing] = useState(false);
+
+  function toggleTheme(t: string) {
+    setSelectedThemes((prev) => {
+      const next = new Set(prev);
+      next.has(t) ? next.delete(t) : next.add(t);
+      return next;
+    });
+  }
+
+  // Live, debounced preview count: re-runs ~400ms after themes/rating stop
+  // changing. Avoids hammering the DB on each keystroke.
+  useEffect(() => {
+    const handle = setTimeout(async () => {
+      setPreviewing(true);
+      try {
+        const res = await fetch(`/api/tutor/sets/${setId}/preview`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            themes: [...selectedThemes],
+            ratingMin: ratingMin ? Number(ratingMin) : null,
+            ratingMax: ratingMax ? Number(ratingMax) : null,
+          }),
+        });
+        if (res.ok) {
+          const { count } = await res.json();
+          setPreviewCount(count);
+        }
+      } finally {
+        setPreviewing(false);
+      }
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [setId, selectedThemes, ratingMin, ratingMax]);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -235,10 +430,7 @@ function FilterEditor({
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        filterThemes: themes
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean),
+        filterThemes: [...selectedThemes],
         filterRatingMin: ratingMin ? Number(ratingMin) : null,
         filterRatingMax: ratingMax ? Number(ratingMax) : null,
         targetCount: targetCount ? Number(targetCount) : null,
@@ -253,47 +445,42 @@ function FilterEditor({
     onChanged();
   }
 
-  // Live preview count: how many puzzles match the current criteria. Hits a
-  // tiny read-only endpoint rather than the write API.
-  async function runPreview() {
-    setPreviewing(true);
-    try {
-      const themesArr = themes
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      const res = await fetch(`/api/tutor/sets/${setId}/preview`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          themes: themesArr,
-          ratingMin: ratingMin ? Number(ratingMin) : null,
-          ratingMax: ratingMax ? Number(ratingMax) : null,
-        }),
-      });
-      if (res.ok) {
-        const { count } = await res.json();
-        setPreviewCount(count);
-      }
-    } finally {
-      setPreviewing(false);
-    }
-  }
-
   return (
     <section className="rounded-lg border bg-white p-6 space-y-4">
       <h2 className="text-lg font-semibold">Filter criteria</h2>
       <form onSubmit={save} className="space-y-4">
         <div>
           <label className="block text-sm text-slate-600 mb-1">
-            Themes <span className="text-slate-400">(comma-separated, empty = any)</span>
+            Themes <span className="text-slate-400">(none = any theme)</span>
           </label>
-          <input
-            value={themes}
-            onChange={(e) => setThemes(e.target.value)}
-            placeholder="backRank, mate, fork"
-            className="w-full border rounded px-3 py-2"
-          />
+          {availableThemes.length === 0 ? (
+            <p className="text-sm text-slate-500">No themes found in the library.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-auto rounded border p-2">
+              {availableThemes.map((t) => {
+                const on = selectedThemes.has(t);
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => toggleTheme(t)}
+                    className={`text-xs px-2 py-1 rounded ${
+                      on
+                        ? "bg-slate-900 text-white"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {selectedThemes.size > 0 && (
+            <p className="text-xs text-slate-500 mt-1">
+              {selectedThemes.size} selected
+            </p>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -329,7 +516,7 @@ function FilterEditor({
             className="w-full border rounded px-3 py-2"
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-3">
           <button
             type="submit"
             disabled={disabled}
@@ -337,19 +524,13 @@ function FilterEditor({
           >
             Save criteria
           </button>
-          <button
-            type="button"
-            onClick={runPreview}
-            disabled={previewing}
-            className="border rounded px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-          >
-            {previewing ? "Counting…" : "Preview count"}
-          </button>
-          {previewCount !== null && (
-            <span className="self-center text-sm text-slate-600">
+          {previewing ? (
+            <span className="text-sm text-slate-400">counting…</span>
+          ) : previewCount !== null ? (
+            <span className="text-sm text-slate-600">
               <strong>{previewCount}</strong> puzzle{previewCount === 1 ? "" : "s"} match
             </span>
-          )}
+          ) : null}
         </div>
       </form>
     </section>
