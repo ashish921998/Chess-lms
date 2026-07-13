@@ -13,6 +13,9 @@ out/
 build/
 next-env.d.ts
 
+# typescript incremental build cache
+*.tsbuildinfo
+
 # env
 .env*
 !.env.example
@@ -23,6 +26,9 @@ coverage/
 # misc
 .DS_Store
 *.pem
+
+# zcode agent artifacts
+.zcode/
 
 # debug
 npm-debug.log*

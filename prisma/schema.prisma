@@ -165,6 +165,9 @@ model StudentPuzzle {
 }
 
 // ─── Tutor sets: manual puzzle selection, published as immutable versions ───
+// MANUAL sets hold hand-picked puzzles (PuzzleSetItem[]); FILTER sets hold
+// criteria (themes + rating range + targetCount) materialized per-student at
+// solve time. `mode` is immutable after create.
 model PuzzleSet {
   id          String         @id @default(cuid())
   tutorId     String
@@ -172,6 +175,12 @@ model PuzzleSet {
   title       String
   description String?
   isPublished Boolean        @default(false)
+  mode        SetMode        @default(MANUAL)
+  // FILTER-only (null/empty on MANUAL):
+  filterThemes    String[] @default([])
+  filterRatingMin Int?
+  filterRatingMax Int?
+  targetCount     Int?     // how many solves complete a FILTER assignment
   createdAt   DateTime       @default(now())
 
   items    PuzzleSetItem[]
@@ -200,6 +209,12 @@ model PuzzleSetVersion {
   setId     String
   set       PuzzleSet @relation(fields: [setId], references: [id], onDelete: Cascade)
   version   Int                                  // monotonic per set
+  mode      SetMode                              // copied from the set at publish
+  // FILTER-only snapshot (frozen at publish); null/empty for MANUAL versions:
+  filterThemes    String[] @default([])
+  filterRatingMin Int?
+  filterRatingMax Int?
+  targetCount     Int?     // copied from set (FILTER); null for MANUAL
   createdAt DateTime @default(now())
 
   items       PuzzleSetVersionItem[]
@@ -229,8 +244,9 @@ model Assignment {
   student     Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
   dueDate     DateTime?
   createdAt   DateTime         @default(now())
-  progress    Int              @default(0)       // denormalized; derived from items
-  completed   Boolean          @default(false)   // denormalized; derived from items
+  progress    Int              @default(0)       // denormalized; derived from items/solves
+  completed   Boolean          @default(false)   // denormalized; derived from items/solves
+  targetCount Int?                               // copied from version (FILTER); null for MANUAL
   items       AssignmentItemProgress[]
   attempts    Attempt[]
 
@@ -252,6 +268,15 @@ model AssignmentItemProgress {
 
   @@unique([assignmentId, puzzleId])
   @@index([assignmentId])
+}
+
+// ─── Set modes ───
+// MANUAL: hand-picked puzzles materialized as PuzzleSetItem/VersionItem.
+// FILTER: criteria (themes + rating range + targetCount) evaluated per-student
+// at solve time. Immutable after a set is created.
+enum SetMode {
+  MANUAL
+  FILTER
 }
 
 // ─── Attempts: one record PER PRESENTATION (not per puzzle) ───
