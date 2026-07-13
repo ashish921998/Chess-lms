@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireStudent } from "@/lib/auth-guards";
 import { signOut as signOutClient } from "@/lib/auth-client";
+import { versionTotal } from "@/lib/puzzles/version-total";
 import { SignOutButton } from "./sign-out-button";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,23 @@ export default async function Dashboard({
     take: 10,
   });
 
+  // Active assignments for the assignments section. MANUAL shows solved/total
+  // items; FILTER shows progress/targetCount. Uncompleted first, then by due date.
+  const assignments = await db.assignment.findMany({
+    where: { studentId: me.id },
+    orderBy: [{ completed: "asc" }, { dueDate: "asc" }],
+    include: {
+      version: {
+        select: {
+          mode: true,
+          targetCount: true,
+          set: { select: { title: true } },
+          _count: { select: { items: true } },
+        },
+      },
+    },
+  });
+
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-start">
@@ -58,6 +76,53 @@ export default async function Dashboard({
           You've solved all available puzzles in your rating range! Try again later —
           new puzzles may be added, or your rating may shift the window.
         </p>
+      )}
+
+      {assignments.length > 0 && (
+        <section>
+          <h2 className="text-lg font-semibold mb-3">Assignments</h2>
+          <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {assignments.map((a) => {
+              const total = versionTotal(a.version);
+              const cta = a.completed
+                ? "Review"
+                : a.progress > 0
+                ? "Continue"
+                : "Start";
+              return (
+                <li key={a.id} className="rounded-lg border bg-white p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-medium">{a.version.set.title}</div>
+                      <div className="text-sm text-slate-500 mt-0.5">
+                        {a.progress}/{total}{" "}
+                        {a.version.mode === "FILTER" ? "solved" : "puzzles"}
+                        {a.completed && <span className="text-green-700"> · done</span>}
+                      </div>
+                    </div>
+                    {a.dueDate && (
+                      <div
+                        className={`text-xs px-2 py-0.5 rounded whitespace-nowrap ${
+                          !a.completed && a.dueDate < new Date()
+                            ? "bg-red-50 text-red-700"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        due {a.dueDate.toLocaleDateString()}
+                      </div>
+                    )}
+                  </div>
+                  <Link
+                    href={`/sets/${a.id}`}
+                    className="mt-3 inline-block text-sm text-blue-600 hover:underline"
+                  >
+                    {cta} →
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       )}
 
       <section>
