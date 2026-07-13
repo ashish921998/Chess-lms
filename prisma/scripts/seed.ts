@@ -1,6 +1,5 @@
 import "dotenv/config";
 import { Chess } from "chess.js";
-import bcrypt from "bcryptjs";
 import { SEED_PUZZLES, type RawPuzzle } from "./puzzle-data";
 import { db as prisma } from "../../src/lib/db";
 
@@ -9,29 +8,50 @@ const TUTOR_PASSWORD = "password123";
 const TUTOR_NAME = "Coach Demo";
 const INVITE_CODE = "CHESSCLASS";
 
+/**
+ * Seeds the tutor via Better Auth's signup API so the password hash uses the
+ * correct algorithm (scrypt, not bcrypt). Then promotes the role to TUTOR and
+ * creates the Tutor profile + invite code. Requires the dev server to be
+ * running (the script calls the signup endpoint over HTTP).
+ */
 async function seedTutor() {
-  const passwordHash = await bcrypt.hash(TUTOR_PASSWORD, 10);
+  const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 
-  const tutorUser = await prisma.user.upsert({
-    where: { email: TUTOR_EMAIL },
+  // Try to sign up. If the email already exists, Better Auth returns an error —
+  // we handle that by falling through to the existing user.
+  const res = await fetch(`${baseUrl}/api/auth/sign-up/email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
+    body: JSON.stringify({ email: TUTOR_EMAIL, password: TUTOR_PASSWORD, name: TUTOR_NAME }),
+  });
+
+  let userId: string;
+
+  if (res.ok) {
+    const body = await res.json();
+    userId = body.user.id;
+    console.log(`  ✓ Created tutor user via Better Auth (id ${userId})`);
+  } else {
+    // User already exists — look them up.
+    const existing = await prisma.user.findUnique({ where: { email: TUTOR_EMAIL } });
+    if (!existing) {
+      const errBody = await res.text();
+      throw new Error(`Tutor signup failed (${res.status}): ${errBody}`);
+    }
+    userId = existing.id;
+    console.log(`  ✓ Tutor user already exists (id ${userId})`);
+  }
+
+  // Promote to TUTOR + create profile + invite code.
+  await prisma.user.update({
+    where: { id: userId },
+    data: { role: "TUTOR" },
+  });
+
+  await prisma.tutor.upsert({
+    where: { userId },
+    create: { id: "seed-tutor", userId },
     update: {},
-    create: {
-      id: "seed-tutor-user",
-      email: TUTOR_EMAIL,
-      name: TUTOR_NAME,
-      role: "TUTOR",
-      emailVerified: true,
-      accounts: {
-        create: {
-          id: "seed-tutor-account",
-          providerId: "credential",
-          accountId: TUTOR_EMAIL,
-          password: passwordHash,
-        },
-      },
-      tutor: { create: { id: "seed-tutor" } },
-    },
-    include: { tutor: true },
   });
 
   const invite = await prisma.inviteCode.upsert({
@@ -39,12 +59,12 @@ async function seedTutor() {
     update: {},
     create: {
       code: INVITE_CODE,
-      tutorId: tutorUser.tutor!.id,
+      tutorId: "seed-tutor",
       maxUses: 50,
     },
   });
 
-  return { tutorUser, invite };
+  return { userId, invite };
 }
 
 /**
@@ -109,8 +129,8 @@ async function seedPuzzles() {
 
 async function main() {
   console.log("Seeding tutor...");
-  const { tutorUser } = await seedTutor();
-  console.log(`  ✓ tutor ${TUTOR_EMAIL} (id ${tutorUser.tutor!.id}), invite ${INVITE_CODE}`);
+  const { userId } = await seedTutor();
+  console.log(`  ✓ tutor ${TUTOR_EMAIL} (userId ${userId}), invite ${INVITE_CODE}`);
 
   console.log("Seeding puzzles...");
   await seedPuzzles();
