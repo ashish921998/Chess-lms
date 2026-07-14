@@ -16,7 +16,7 @@ describe("evaluateBadgesTx", () => {
       const fx = await seedFixture(tx);
       // No prior SOLVED attempts → first_solve fires.
       const a1 = await makeBadgeAttempt(tx, fx.studentId, "pz-1500-mate", NOW);
-      let awarded = await evaluateBadgesTx(tx, a1, 0);
+      let awarded = await evaluateBadgesTx(tx, a1, { streak: 0 });
       expect(awarded).toContain("first_solve");
 
       // Add a prior SOLVED, then re-evaluate — first_solve must NOT re-fire.
@@ -29,7 +29,7 @@ describe("evaluateBadgesTx", () => {
         },
       });
       const a2 = await makeBadgeAttempt(tx, fx.studentId, "pz-1900-fork", NOW);
-      awarded = await evaluateBadgesTx(tx, a2, 0);
+      awarded = await evaluateBadgesTx(tx, a2, { streak: 0 });
       expect(awarded).not.toContain("first_solve");
     });
   });
@@ -38,11 +38,11 @@ describe("evaluateBadgesTx", () => {
     await withRollbackTx(async (tx) => {
       const fx = await seedFixture(tx);
       const a = await makeBadgeAttempt(tx, fx.studentId, "pz-1500-mate", NOW);
-      const awarded7 = await evaluateBadgesTx(tx, a, 7);
+      const awarded7 = await evaluateBadgesTx(tx, a, { streak: 7 });
       expect(awarded7).toContain("streak_7");
       expect(awarded7).not.toContain("streak_30");
 
-      const awarded30 = await evaluateBadgesTx(tx, a, 30);
+      const awarded30 = await evaluateBadgesTx(tx, a, { streak: 30 });
       // streak_7 already awarded (no re-fire), streak_30 newly fires.
       expect(awarded30).not.toContain("streak_7");
       expect(awarded30).toContain("streak_30");
@@ -64,7 +64,7 @@ describe("evaluateBadgesTx", () => {
         });
       }
       const a = await makeBadgeAttempt(tx, fx.studentId, "pz-1500-mate", NOW);
-      const awarded = await evaluateBadgesTx(tx, a, 0);
+      const awarded = await evaluateBadgesTx(tx, a, { streak: 0 });
       expect(awarded).toContain("centurion");
     });
   });
@@ -84,7 +84,7 @@ describe("evaluateBadgesTx", () => {
         });
       }
       const a = await makeBadgeAttempt(tx, fx.studentId, "pz-1500-mate", NOW);
-      const awarded = await evaluateBadgesTx(tx, a, 0);
+      const awarded = await evaluateBadgesTx(tx, a, { streak: 0 });
       expect(awarded).toContain("sharpshooter");
     });
   });
@@ -103,7 +103,7 @@ describe("evaluateBadgesTx", () => {
         });
       }
       const a = await makeBadgeAttempt(tx, fx.studentId, "pz-1500-mate", NOW);
-      const awarded = await evaluateBadgesTx(tx, a, 0);
+      const awarded = await evaluateBadgesTx(tx, a, { streak: 0 });
       expect(awarded).not.toContain("sharpshooter");
     });
   });
@@ -130,7 +130,7 @@ describe("evaluateBadgesTx", () => {
         },
       });
       const a = await makeBadgeAttempt(tx, fx.studentId, "pz-1500-mate", NOW);
-      const awarded = await evaluateBadgesTx(tx, a, 0);
+      const awarded = await evaluateBadgesTx(tx, a, { streak: 0 });
       expect(awarded).not.toContain("sharpshooter");
     });
   });
@@ -151,7 +151,7 @@ describe("evaluateBadgesTx", () => {
         });
       }
       const a = await makeBadgeAttempt(tx, fx.studentId, "pz-1000-backRank", NOW);
-      const awarded = await evaluateBadgesTx(tx, a, 0);
+      const awarded = await evaluateBadgesTx(tx, a, { streak: 0 });
       expect(awarded).toContain("theme_master_backRank");
       expect(awarded).toContain("theme_master_mate"); // mate also at 20
     });
@@ -171,7 +171,7 @@ describe("evaluateBadgesTx", () => {
         });
       }
       const a = await makeBadgeAttempt(tx, fx.studentId, "pz-1500-mate", NOW);
-      const awarded = await evaluateBadgesTx(tx, a, 0);
+      const awarded = await evaluateBadgesTx(tx, a, { streak: 0 });
       expect(awarded).toContain("comeback");
     });
   });
@@ -204,7 +204,7 @@ describe("evaluateBadgesTx", () => {
         },
       });
       const a = await makeBadgeAttempt(tx, fx.studentId, "pz-1500-mate", NOW);
-      const awarded = await evaluateBadgesTx(tx, a, 0);
+      const awarded = await evaluateBadgesTx(tx, a, { streak: 0 });
       expect(awarded).not.toContain("comeback");
     });
   });
@@ -213,8 +213,8 @@ describe("evaluateBadgesTx", () => {
     await withRollbackTx(async (tx) => {
       const fx = await seedFixture(tx);
       const a = await makeBadgeAttempt(tx, fx.studentId, "pz-1500-mate", NOW);
-      await evaluateBadgesTx(tx, a, 0);
-      await evaluateBadgesTx(tx, a, 0); // re-run
+      await evaluateBadgesTx(tx, a, { streak: 0 });
+      await evaluateBadgesTx(tx, a, { streak: 0 }); // re-run
       const rows = await tx.studentBadge.findMany({ where: { studentId: fx.studentId } });
       expect(rows.length).toBe(1);
       expect(rows[0].badgeKey).toBe("first_solve");

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { localDateFor } from "@/lib/gamification/dates";
 import { withRollbackTx, seedFixture } from "./db-harness";
-import { finalizeSolvedTx, type FinalizeAttempt } from "@/lib/puzzles/finalize";
+import { recordSolve, type FinalizeAttempt } from "@/lib/attempts/finalize";
 import type { PrismaTransaction } from "@/lib/puzzles/transaction-client";
 
 /**
@@ -37,7 +37,7 @@ describe("localDateFor (gate #1 — unit)", () => {
   });
 });
 
-describe("finalizeSolvedTx — DailyProgress uses the student's local date (gate #1)", () => {
+describe("recordSolve — DailyProgress uses the student's local date (gate #1)", () => {
   it("a solve writes DailyProgress for the timezone-correct local date", async () => {
     await withRollbackTx(async (tx) => {
       const fx = await seedFixture(tx);
@@ -49,7 +49,7 @@ describe("finalizeSolvedTx — DailyProgress uses the student's local date (gate
       });
 
       const attempt = await makeAttempt(tx, fx.studentId, "pz-1500-mate", "America/New_York");
-      await finalizeSolvedTx(tx, attempt);
+      await recordSolve(tx, attempt);
 
       // Today in NY as a date-only key.
       const nyToday = localDateFor(new Date(), "America/New_York");

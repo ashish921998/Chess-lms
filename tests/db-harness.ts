@@ -21,7 +21,7 @@ import type { PrismaTransaction } from "@/lib/puzzles/transaction-client";
  *
  * Because the test owns the transaction, logic under test must accept an
  * injected `tx` (the `PrismaTransaction` client) — that's why the M3 slice
- * extracts `finalizeSolvedTx(tx, ...)` etc. Calling code that opens its OWN
+ * extracts `recordSolve(tx, ...)` etc. Calling code that opens its OWN
  * `db.$transaction` would commit and defeat the rollback, so those wrappers are
  * split into `*Tx` inner functions the harness can drive.
  */

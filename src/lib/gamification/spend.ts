@@ -1,8 +1,9 @@
 import type { PrismaTransaction } from "@/lib/puzzles/transaction-client";
+import { writeLedgerRow } from "@/lib/ledger";
+import { HINT_COST, SKIP_COST } from "@/lib/economy";
 
-/** Cost (coins) of each spend action. Coins are the spendable balance. */
-export const HINT_COST = 15;
-export const SKIP_COST = 30;
+/** Re-exported from the economy so existing importers keep their import path. */
+export { HINT_COST, SKIP_COST };
 
 /** Result codes the spend routes translate to HTTP statuses. */
 export type HintResult =
@@ -70,13 +71,15 @@ export async function purchaseHintTx(
     return { kind: "insufficient_funds" };
   }
 
-  // 4. Ledger row — ON CONFLICT makes a retry non-recharging. RETURNING id
-  //    distinguishes a fresh insert from a retry collision (spec contract).
-  const credited = await tx.$queryRaw<{ id: string }[]>`
-    INSERT INTO "CoinTransaction" (id, "studentId", amount, reason, "idempotencyKey", "refId", "createdAt")
-    VALUES (gen_random_uuid(), ${attempt.studentId}, ${-HINT_COST}, 'PURCHASE_HINT', ${`hint:${attempt.id}`}, ${attempt.id}, NOW())
-    ON CONFLICT ("idempotencyKey") DO NOTHING RETURNING id
-  `;
+  // 4. Ledger row — ON CONFLICT makes a retry non-recharging. The balance was
+  //    already debited conditionally in step 3, so this only records the row.
+  const credited = await writeLedgerRow(tx, {
+    studentId: attempt.studentId,
+    amount: -HINT_COST,
+    reason: "PURCHASE_HINT",
+    idempotencyKey: `hint:${attempt.id}`,
+    refId: attempt.id,
+  });
 
   // 5. Flip the flag + store the revealed move. Guarded by status = 'PENDING'
   //    RETURNING — if the race was lost (a concurrent finalize/skip flipped the
@@ -87,7 +90,7 @@ export async function purchaseHintTx(
     UPDATE "Attempt" SET "usedHint" = true, "hintMove" = ${hintMove}
     WHERE id = ${attempt.id} AND status = 'PENDING' RETURNING id
   `;
-  if (flipped.length === 0 && credited.length > 0) {
+  if (flipped.length === 0 && credited) {
     throw new Error("__race_lost__");
   }
 
@@ -127,12 +130,14 @@ export async function purchaseSkipTx(
     return { kind: "insufficient_funds" };
   }
 
-  // 3. Ledger row — RETURNING id (spec contract).
-  const credited = await tx.$queryRaw<{ id: string }[]>`
-    INSERT INTO "CoinTransaction" (id, "studentId", amount, reason, "idempotencyKey", "refId", "createdAt")
-    VALUES (gen_random_uuid(), ${attempt.studentId}, ${-SKIP_COST}, 'PURCHASE_SKIP', ${`skip:${attempt.id}`}, ${attempt.id}, NOW())
-    ON CONFLICT ("idempotencyKey") DO NOTHING RETURNING id
-  `;
+  // 3. Ledger row — the balance was already debited conditionally in step 2.
+  const credited = await writeLedgerRow(tx, {
+    studentId: attempt.studentId,
+    amount: -SKIP_COST,
+    reason: "PURCHASE_SKIP",
+    idempotencyKey: `skip:${attempt.id}`,
+    refId: attempt.id,
+  });
 
   // 4. Finalize as SKIPPED — guarded by status = 'PENDING' RETURNING. If the
   //    race was lost (a concurrent finalize flipped the status between the debit
@@ -142,7 +147,7 @@ export async function purchaseSkipTx(
     UPDATE "Attempt" SET status = 'SKIPPED', "usedSkip" = true, "finalizedAt" = NOW()
     WHERE id = ${attempt.id} AND status = 'PENDING' RETURNING id
   `;
-  if (flipped.length === 0 && credited.length > 0) {
+  if (flipped.length === 0 && credited) {
     throw new Error("__race_lost__");
   }
 
