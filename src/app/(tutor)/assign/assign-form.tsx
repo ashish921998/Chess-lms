@@ -93,19 +93,19 @@ export function AssignForm({
   return (
     <form onSubmit={submit} className="space-y-6">
       {error && (
-        <p className="text-red-700 text-sm bg-red-50 rounded px-3 py-2">{error}</p>
+        <p className="border border-error/40 text-error px-3 py-2 text-[13px]">{error}</p>
       )}
       {result && (
-        <p className="text-green-700 text-sm bg-green-50 rounded px-3 py-2">{result}</p>
+        <p className="border border-success/40 text-success px-3 py-2 text-[13px]">{result}</p>
       )}
 
-      <section className="rounded-lg border bg-white p-6 space-y-3">
-        <label className="block text-sm font-medium text-slate-700">Version</label>
+      <section className="border border-line bg-panel p-6 space-y-3">
+        <label className="block text-[11px] uppercase tracking-[0.07em] text-muted2">Version</label>
         <select
           name="versionId"
           required
           defaultValue=""
-          className="w-full border rounded px-3 py-2"
+          className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
         >
           <option value="" disabled>
             Select a published version…
@@ -118,51 +118,53 @@ export function AssignForm({
         </select>
       </section>
 
-      <section className="rounded-lg border bg-white p-6 space-y-3">
+      <section className="border border-line bg-panel p-6 space-y-3">
         <div className="flex items-center justify-between">
-          <label className="block text-sm font-medium text-slate-700">
+          <label className="text-[11px] uppercase tracking-[0.07em] text-muted2">
             Students ({selected.size} selected)
           </label>
-          <div className="flex gap-3 text-sm">
-            <button type="button" onClick={selectAll} className="text-blue-600 hover:underline">
+          <div className="flex gap-3 text-[12px] uppercase tracking-[0.06em]">
+            <button type="button" onClick={selectAll} className="text-rust hover:underline">
               All
             </button>
-            <button type="button" onClick={clearAll} className="text-slate-500 hover:underline">
+            <button type="button" onClick={clearAll} className="text-muted hover:underline">
               None
             </button>
           </div>
         </div>
-        <ul className="divide-y rounded border max-h-72 overflow-auto">
+        <ul className="divide-y divide-line border border-line max-h-72 overflow-auto">
           {students.map((s) => (
             <li key={s.id} className="flex items-center gap-3 p-3">
               <input
                 type="checkbox"
                 checked={selected.has(s.id)}
                 onChange={() => toggle(s.id)}
-                className="h-4 w-4"
+                className="h-4 w-4 accent-[var(--rust)]"
               />
-              <span className="flex-1">{s.displayName}</span>
-              <span className="text-sm text-slate-500">Rating {s.inAppRating}</span>
+              <span className="flex-1 text-[13px] text-ink">{s.displayName}</span>
+              <span className="text-[12px] uppercase tracking-[0.05em] text-muted">
+                Rating <span className="text-rust">{s.inAppRating}</span>
+              </span>
             </li>
           ))}
         </ul>
       </section>
 
-      <section className="rounded-lg border bg-white p-6 space-y-3">
-        <label className="block text-sm font-medium text-slate-700">
-          Due date <span className="text-slate-400">(optional)</span>
+      <section className="border border-line bg-panel p-6 space-y-3">
+        <label className="text-[11px] uppercase tracking-[0.07em] text-muted2">
+          Due date <span className="text-muted">(optional)</span>
         </label>
         <input
           name="dueDate"
           type="date"
-          className="w-full border rounded px-3 py-2 sm:w-60"
+          className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink sm:w-60"
         />
       </section>
 
       <button
         type="submit"
         disabled={pending || submitting}
-        className="bg-slate-900 text-white rounded px-4 py-2 hover:bg-slate-800 disabled:opacity-50"
+        className="bg-rust text-paper px-4 py-2 text-[11px] uppercase tracking-[0.07em] hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
       >
         {pending || submitting ? "Assigning…" : "Assign"}
       </button>

@@ -52,30 +52,30 @@ export function NewSetForm() {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
+    <form onSubmit={submit} className="space-y-5">
       {error && (
-        <p className="text-red-700 text-sm bg-red-50 rounded px-3 py-2">{error}</p>
+        <p className="border border-error/40 text-error px-3 py-2 text-[13px]">{error}</p>
       )}
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Mode</label>
+        <label className="block mb-1 text-[11px] uppercase tracking-[0.07em] text-muted2">Mode</label>
         <div className="flex gap-2">
           {(["MANUAL", "FILTER"] as const).map((m) => (
             <button
               key={m}
               type="button"
               onClick={() => setMode(m)}
-              className={`px-3 py-1.5 rounded text-sm border ${
+              className={`px-3 py-1.5 text-[12px] uppercase tracking-[0.06em] border transition-colors ${
                 mode === m
-                  ? "bg-slate-900 text-white border-slate-900"
-                  : "bg-white text-slate-700 border-slate-300 hover:border-slate-400"
+                  ? "bg-ink text-paper border-ink"
+                  : "bg-paper text-muted border-line hover:border-ink"
               }`}
             >
               {m}
             </button>
           ))}
         </div>
-        <p className="text-xs text-slate-500 mt-1">
+        <p className="mt-1 text-[12px] text-muted">
           {mode === "MANUAL"
             ? "Hand-pick puzzles; each student solves the same set."
             : "Criteria-based; each student gets level-appropriate puzzles from the range."}
@@ -83,62 +83,62 @@ export function NewSetForm() {
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Title</label>
+        <label className="block mb-1 text-[11px] uppercase tracking-[0.07em] text-muted2">Title</label>
         <input
           name="title"
           required
           placeholder="e.g. Week 3 — Back-rank mates"
-          className="w-full border rounded px-3 py-2"
+          className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
         />
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">
-          Description <span className="text-slate-400">(optional)</span>
+        <label className="block mb-1 text-[11px] uppercase tracking-[0.07em] text-muted2">
+          Description <span className="text-muted">(optional)</span>
         </label>
         <input
           name="description"
           placeholder="Shown to students"
-          className="w-full border rounded px-3 py-2"
+          className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
         />
       </div>
 
       {mode === "FILTER" && (
-        <div className="space-y-4 rounded-lg border border-slate-200 p-4 bg-slate-50">
-          <p className="text-sm font-medium text-slate-700">Filter criteria</p>
+        <div className="space-y-4 border border-line bg-shade p-4">
+          <p className="text-[11px] uppercase tracking-[0.07em] text-muted2">Filter criteria</p>
           <div>
-            <label className="block text-sm text-slate-600 mb-1">
-              Themes <span className="text-slate-400">(comma-separated, optional)</span>
+            <label className="block mb-1 text-[12px] text-muted">
+              Themes <span className="text-muted2">(comma-separated, optional)</span>
             </label>
             <input
               name="themes"
               placeholder="backRank, mate, fork"
-              className="w-full border rounded px-3 py-2"
+              className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm text-slate-600 mb-1">Rating min</label>
+              <label className="block mb-1 text-[12px] text-muted">Rating min</label>
               <input
                 name="filterRatingMin"
                 type="number"
                 placeholder="800"
-                className="w-full border rounded px-3 py-2"
+                className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
               />
             </div>
             <div>
-              <label className="block text-sm text-slate-600 mb-1">Rating max</label>
+              <label className="block mb-1 text-[12px] text-muted">Rating max</label>
               <input
                 name="filterRatingMax"
                 type="number"
                 placeholder="1600"
-                className="w-full border rounded px-3 py-2"
+                className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
               />
             </div>
           </div>
           <div>
-            <label className="block text-sm text-slate-600 mb-1">
-              Target solves to complete <span className="text-red-500">*</span>
+            <label className="block mb-1 text-[12px] text-muted">
+              Target solves to complete <span className="text-error">*</span>
             </label>
             <input
               name="targetCount"
@@ -146,7 +146,7 @@ export function NewSetForm() {
               min={1}
               required
               placeholder="20"
-              className="w-full border rounded px-3 py-2"
+              className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
             />
           </div>
         </div>
@@ -155,7 +155,7 @@ export function NewSetForm() {
       <button
         type="submit"
         disabled={pending}
-        className="bg-slate-900 text-white rounded px-4 py-2 hover:bg-slate-800 disabled:opacity-50"
+        className="bg-rust text-paper px-4 py-2 text-[11px] uppercase tracking-[0.07em] hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
       >
         {pending ? "Creating…" : "Create set"}
       </button>

@@ -56,10 +56,10 @@ export function SetEditor({
   return (
     <div className="space-y-6">
       {error && (
-        <p className="text-red-700 text-sm bg-red-50 rounded px-3 py-2">{error}</p>
+        <p className="border border-error/40 text-error px-3 py-2 text-[13px]">{error}</p>
       )}
       {info && (
-        <p className="text-green-700 text-sm bg-green-50 rounded px-3 py-2">{info}</p>
+        <p className="border border-success/40 text-success px-3 py-2 text-[13px]">{info}</p>
       )}
 
       {mode === "MANUAL" ? (
@@ -198,23 +198,23 @@ function ManualEditor({
   }
 
   return (
-    <section className="rounded-lg border bg-white p-6 space-y-6">
-      <h2 className="text-lg font-semibold">Puzzles ({items.length})</h2>
+    <section className="border border-line bg-panel p-6 space-y-6">
+      <h2 className="font-serif text-lg tracking-tight">Puzzles ({items.length})</h2>
 
       {/* Add by ID */}
       <div>
-        <h3 className="text-sm font-medium text-slate-700 mb-2">Add by puzzle ID</h3>
+        <h3 className="mb-2 text-[11px] uppercase tracking-[0.07em] text-muted2">Add by puzzle ID</h3>
         <form onSubmit={add} className="flex gap-2">
           <input
             value={puzzleId}
             onChange={(e) => setPuzzleId(e.target.value)}
             placeholder="Puzzle ID"
-            className="flex-1 border rounded px-3 py-2 font-mono text-sm"
+            className="flex-1 border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
           />
           <button
             type="submit"
             disabled={disabled || !puzzleId.trim()}
-            className="bg-slate-900 text-white rounded px-3 py-2 hover:bg-slate-800 disabled:opacity-50 text-sm"
+            className="bg-ink text-paper px-3 py-2 text-[11px] uppercase tracking-[0.07em] hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
           >
             Add
           </button>
@@ -222,8 +222,8 @@ function ManualEditor({
       </div>
 
       {/* Search by rating/themes */}
-      <div className="border-t pt-4">
-        <h3 className="text-sm font-medium text-slate-700 mb-2">Or search the library</h3>
+      <div className="border-t border-line pt-4">
+        <h3 className="mb-2 text-[11px] uppercase tracking-[0.07em] text-muted2">Or search the library</h3>
         <form onSubmit={runSearch} className="space-y-2">
           <div className="grid grid-cols-3 gap-2">
             <input
@@ -231,47 +231,47 @@ function ManualEditor({
               onChange={(e) => setSRatingMin(e.target.value)}
               type="number"
               placeholder="Rating min"
-              className="border rounded px-3 py-2 text-sm"
+              className="border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
             />
             <input
               value={sRatingMax}
               onChange={(e) => setSRatingMax(e.target.value)}
               type="number"
               placeholder="Rating max"
-              className="border rounded px-3 py-2 text-sm"
+              className="border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
             />
             <input
               value={sThemes}
               onChange={(e) => setSThemes(e.target.value)}
               placeholder="themes: a, b"
-              className="border rounded px-3 py-2 text-sm"
+              className="border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
             />
           </div>
           <button
             type="submit"
             disabled={searching}
-            className="border rounded px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-50"
+            className="border border-ink px-3 py-1.5 text-[11px] uppercase tracking-[0.07em] text-ink hover:bg-ink hover:text-paper active:scale-[0.98] disabled:opacity-50"
           >
             {searching ? "Searching…" : "Search"}
           </button>
         </form>
 
         {results && (
-          <ul className="mt-3 divide-y rounded border max-h-64 overflow-auto">
+          <ul className="mt-3 divide-y divide-line border border-line max-h-64 overflow-auto">
             {results.length === 0 ? (
-              <li className="p-3 text-sm text-slate-500">No puzzles match.</li>
+              <li className="p-3 text-[13px] text-muted">No puzzles match.</li>
             ) : (
               results.map((p) => {
                 const inSet = alreadyInSet.has(p.id);
                 return (
                   <li key={p.id} className="flex items-center justify-between p-2">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="font-mono">{p.id}</span>
-                      <span className="bg-slate-100 text-slate-700 text-xs px-1.5 py-0.5 rounded">
+                    <div className="flex items-center gap-2 text-[13px]">
+                      <span className="font-mono text-ink">{p.id}</span>
+                      <span className="text-[10px] uppercase tracking-[0.06em] px-1.5 py-0.5 border border-line text-muted">
                         {p.rating}
                       </span>
                       {p.themes.slice(0, 2).map((t) => (
-                        <span key={t} className="bg-blue-50 text-blue-700 text-xs px-1.5 py-0.5 rounded">
+                        <span key={t} className="text-[10px] uppercase tracking-[0.06em] px-1.5 py-0.5 border border-info text-info">
                           {t}
                         </span>
                       ))}
@@ -279,7 +279,7 @@ function ManualEditor({
                     <button
                       onClick={() => addFromSearch(p.id)}
                       disabled={disabled || inSet}
-                      className="text-blue-600 text-sm hover:underline disabled:opacity-40"
+                      className="text-rust text-[12px] hover:underline disabled:opacity-40"
                     >
                       {inSet ? "added" : "add"}
                     </button>
@@ -293,21 +293,21 @@ function ManualEditor({
 
       {/* Ordered list with reorder controls */}
       {items.length === 0 ? (
-        <p className="text-sm text-slate-500 border-t pt-4">
+        <p className="text-[13px] text-muted border-t border-line pt-4">
           No puzzles yet. Add by ID or search above.
         </p>
       ) : (
-        <ol className="divide-y rounded border border-t pt-0">
+        <ol className="divide-y divide-line border border-line border-t-0">
           {items.map((it, i) => (
             <li key={it.id} className="flex items-center justify-between p-3">
               <div className="flex items-center gap-3">
-                <span className="text-slate-400 text-sm w-6">{i + 1}.</span>
-                <span className="font-mono text-sm">{it.puzzleId}</span>
-                <span className="bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded">
+                <span className="text-muted2 text-[13px] w-6 font-mono">{i + 1}.</span>
+                <span className="font-mono text-[13px] text-ink">{it.puzzleId}</span>
+                <span className="text-[10px] uppercase tracking-[0.06em] px-2 py-0.5 border border-line text-muted">
                   {it.rating}
                 </span>
                 {it.themes.slice(0, 3).map((t) => (
-                  <span key={t} className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded">
+                  <span key={t} className="text-[10px] uppercase tracking-[0.06em] px-2 py-0.5 border border-info text-info">
                     {t}
                   </span>
                 ))}
@@ -316,7 +316,7 @@ function ManualEditor({
                 <button
                   onClick={() => move(i, i - 1)}
                   disabled={disabled || i === 0}
-                  className="text-slate-500 hover:text-slate-900 disabled:opacity-30 text-sm"
+                  className="text-muted hover:text-ink disabled:opacity-30 text-[13px]"
                   title="Move up"
                 >
                   ↑
@@ -324,7 +324,7 @@ function ManualEditor({
                 <button
                   onClick={() => move(i, i + 1)}
                   disabled={disabled || i === items.length - 1}
-                  className="text-slate-500 hover:text-slate-900 disabled:opacity-30 text-sm"
+                  className="text-muted hover:text-ink disabled:opacity-30 text-[13px]"
                   title="Move down"
                 >
                   ↓
@@ -332,7 +332,7 @@ function ManualEditor({
                 <button
                   onClick={() => remove(it.puzzleId)}
                   disabled={disabled}
-                  className="text-red-600 text-sm hover:underline disabled:opacity-50"
+                  className="text-error text-[12px] hover:underline disabled:opacity-50"
                 >
                   Remove
                 </button>
@@ -446,17 +446,17 @@ function FilterEditor({
   }
 
   return (
-    <section className="rounded-lg border bg-white p-6 space-y-4">
-      <h2 className="text-lg font-semibold">Filter criteria</h2>
+    <section className="border border-line bg-panel p-6 space-y-4">
+      <h2 className="font-serif text-lg tracking-tight">Filter criteria</h2>
       <form onSubmit={save} className="space-y-4">
         <div>
-          <label className="block text-sm text-slate-600 mb-1">
-            Themes <span className="text-slate-400">(none = any theme)</span>
+          <label className="block mb-1 text-[11px] uppercase tracking-[0.07em] text-muted2">
+            Themes <span className="text-muted">(none = any theme)</span>
           </label>
           {availableThemes.length === 0 ? (
-            <p className="text-sm text-slate-500">No themes found in the library.</p>
+            <p className="text-[13px] text-muted">No themes found in the library.</p>
           ) : (
-            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-auto rounded border p-2">
+            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-auto border border-line bg-paper p-2">
               {availableThemes.map((t) => {
                 const on = selectedThemes.has(t);
                 return (
@@ -464,10 +464,10 @@ function FilterEditor({
                     key={t}
                     type="button"
                     onClick={() => toggleTheme(t)}
-                    className={`text-xs px-2 py-1 rounded ${
+                    className={`text-[11px] uppercase tracking-[0.06em] px-2 py-1 border transition-colors ${
                       on
-                        ? "bg-slate-900 text-white"
-                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                        ? "bg-ink text-paper border-ink"
+                        : "bg-paper text-muted border-line hover:border-ink"
                     }`}
                   >
                     {t}
@@ -477,35 +477,35 @@ function FilterEditor({
             </div>
           )}
           {selectedThemes.size > 0 && (
-            <p className="text-xs text-slate-500 mt-1">
+            <p className="mt-1 text-[12px] text-muted">
               {selectedThemes.size} selected
             </p>
           )}
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm text-slate-600 mb-1">Rating min</label>
+            <label className="block mb-1 text-[12px] text-muted">Rating min</label>
             <input
               value={ratingMin}
               onChange={(e) => setRatingMin(e.target.value)}
               type="number"
               placeholder="800"
-              className="w-full border rounded px-3 py-2"
+              className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
             />
           </div>
           <div>
-            <label className="block text-sm text-slate-600 mb-1">Rating max</label>
+            <label className="block mb-1 text-[12px] text-muted">Rating max</label>
             <input
               value={ratingMax}
               onChange={(e) => setRatingMax(e.target.value)}
               type="number"
               placeholder="1600"
-              className="w-full border rounded px-3 py-2"
+              className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
             />
           </div>
         </div>
         <div>
-          <label className="block text-sm text-slate-600 mb-1">Target solves</label>
+          <label className="block mb-1 text-[12px] text-muted">Target solves</label>
           <input
             value={targetCount}
             onChange={(e) => setTargetCount(e.target.value)}
@@ -513,22 +513,22 @@ function FilterEditor({
             min={1}
             required
             placeholder="20"
-            className="w-full border rounded px-3 py-2"
+            className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
           />
         </div>
         <div className="flex items-center gap-3">
           <button
             type="submit"
             disabled={disabled}
-            className="bg-slate-900 text-white rounded px-4 py-2 hover:bg-slate-800 disabled:opacity-50 text-sm"
+            className="bg-ink text-paper px-4 py-2 text-[11px] uppercase tracking-[0.07em] hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
           >
             Save criteria
           </button>
           {previewing ? (
-            <span className="text-sm text-slate-400">counting…</span>
+            <span className="text-[12px] text-muted2">counting…</span>
           ) : previewCount !== null ? (
-            <span className="text-sm text-slate-600">
-              <strong>{previewCount}</strong> puzzle{previewCount === 1 ? "" : "s"} match
+            <span className="text-[12px] uppercase tracking-[0.05em] text-muted">
+              <span className="font-mono text-rust">{previewCount}</span> puzzle{previewCount === 1 ? "" : "s"} match
             </span>
           ) : null}
         </div>
@@ -581,16 +581,16 @@ function PublishBar({
   }
 
   return (
-    <section className="rounded-lg border bg-slate-50 p-6 flex items-center justify-between">
-      <div className="text-sm">
-        <p className="font-medium text-slate-900">Publishing</p>
-        <p className="text-slate-500">
+    <section className="border border-line bg-shade p-6 flex items-center justify-between gap-6">
+      <div>
+        <p className="text-[11px] uppercase tracking-[0.07em] text-muted2">Publishing</p>
+        <p className="mt-1 text-[13px] text-body max-w-xl">
           {isPublished
             ? `Published (v${latestVersion}). Editing the draft does not change in-flight assignments — publish again to create v${(latestVersion ?? 0) + 1}.`
             : "Publish an immutable snapshot. Assignments reference a version, so later edits never change in-flight work."}
         </p>
         {!canPublish && (
-          <p className="text-amber-700 mt-1">
+          <p className="text-warning mt-1 text-[12px]">
             {mode === "MANUAL"
               ? "Add at least one puzzle before publishing."
               : "Set a target solve count before publishing."}
@@ -600,7 +600,7 @@ function PublishBar({
       <button
         onClick={publish}
         disabled={disabled || publishing || !canPublish}
-        className="bg-slate-900 text-white rounded px-4 py-2 hover:bg-slate-800 disabled:opacity-50 text-sm whitespace-nowrap"
+        className="bg-rust text-paper px-4 py-2 text-[11px] uppercase tracking-[0.07em] hover:opacity-90 active:scale-[0.98] disabled:opacity-50 whitespace-nowrap"
       >
         {publishing ? "Publishing…" : isPublished ? `Publish v${(latestVersion ?? 0) + 1}` : "Publish"}
       </button>

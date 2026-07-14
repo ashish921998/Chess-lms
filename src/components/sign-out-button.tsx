@@ -11,7 +11,7 @@ export function SignOutButton() {
         await signOut();
         router.push("/login");
       }}
-      className="text-sm text-slate-500 hover:text-slate-900"
+      className="text-[12px] uppercase tracking-[0.06em] text-muted hover:text-rust"
     >
       Sign out
     </button>

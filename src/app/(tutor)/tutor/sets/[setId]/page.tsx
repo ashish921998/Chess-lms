@@ -46,35 +46,38 @@ export default async function SetEditorPage({
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/tutor/sets" className="text-sm text-slate-500 hover:text-slate-900">
+        <Link
+          href="/tutor/sets"
+          className="text-[12px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
+        >
           ← Sets
         </Link>
         <div className="flex items-center gap-2 mt-2">
-          <h1 className="text-2xl font-bold">{set.title}</h1>
+          <h1 className="font-serif text-2xl tracking-tight">{set.title}</h1>
           <span
-            className={`text-xs px-2 py-0.5 rounded ${
+            className={`text-[10px] uppercase tracking-[0.06em] px-2 py-0.5 border ${
               set.mode === "FILTER"
-                ? "bg-purple-50 text-purple-700"
-                : "bg-slate-100 text-slate-700"
+                ? "border-info text-info"
+                : "border-line text-muted"
             }`}
           >
             {set.mode}
           </span>
           <span
-            className={`text-xs px-2 py-0.5 rounded ${
+            className={`text-[10px] uppercase tracking-[0.06em] px-2 py-0.5 border ${
               set.isPublished
-                ? "bg-green-50 text-green-700"
-                : "bg-amber-50 text-amber-700"
+                ? "border-success/40 text-success"
+                : "border-warning text-warning"
             }`}
           >
             {set.isPublished ? "Published" : "Draft"}
           </span>
         </div>
         {set.description && (
-          <p className="text-sm text-slate-500 mt-1">{set.description}</p>
+          <p className="mt-1 text-[13px] text-body">{set.description}</p>
         )}
         {set.versions.length > 0 && (
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="mt-1 text-[11px] uppercase tracking-[0.05em] text-muted2">
             Latest version: v{set.versions[0].version}
           </p>
         )}

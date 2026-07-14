@@ -12,10 +12,13 @@ export default function NewSetPage() {
   return (
     <div className="space-y-6 max-w-xl">
       <div>
-        <Link href="/tutor/sets" className="text-sm text-slate-500 hover:text-slate-900">
+        <Link
+          href="/tutor/sets"
+          className="text-[12px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
+        >
           ← Sets
         </Link>
-        <h1 className="text-2xl font-bold mt-2">New puzzle set</h1>
+        <h1 className="font-serif text-2xl tracking-tight mt-2">New puzzle set</h1>
       </div>
       <NewSetForm />
     </div>

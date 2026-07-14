@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { APIError } from "better-auth";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 
 async function signup(formData: FormData) {
@@ -32,28 +34,43 @@ async function signup(formData: FormData) {
   const invite = await db.inviteCode.findUnique({ where: { code } });
   if (!invite) redirect("/signup?error=invalid_code");
 
-  // 3. Create the auth user via Better Auth's internal API. `role` defaults to
-  //    STUDENT and is input:false, so it can't be set here.
-  const baseUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
-  const res = await fetch(`${baseUrl}/api/auth/sign-up/email`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, name: displayName }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    const msg = encodeURIComponent(body?.message || "signup_failed");
-    redirect(`/signup?error=${msg}`);
-  }
-  const created = await res.json();
-  const userId: string = created.user.id;
+  // 3. Create the auth user via Better Auth's server API. We call the endpoint
+  //    directly (auth.api.signUpEmail) rather than fetching /api/auth/sign-up/
+  //    email over HTTP: a server-side fetch carries no Origin header, which
+  //    trips Better Auth's CSRF origin check ("Missing or null Origin"). The
+  //    direct call bypasses the HTTP layer entirely. `role` defaults to STUDENT
+  //    and is input:false, so it can't be set here.
+  try {
+    const { user } = await auth.api.signUpEmail({
+      body: { email, password, name: displayName },
+    });
 
-  // 4. Create the Student profile, bound to the tutor.
-  await db.student.create({
-    data: { userId, tutorId: invite.tutorId, displayName },
-  });
+    // 4. Create the Student profile, bound to the tutor.
+    await db.student.create({
+      data: { userId: user.id, tutorId: invite.tutorId, displayName },
+    });
+  } catch (e) {
+    const errCode = errorToCode(e);
+    redirect(`/signup?error=${encodeURIComponent(errCode)}`);
+  }
 
   redirect("/login?signedup=1");
+}
+
+/** Map a Better Auth APIError to the signup error-query param. */
+function errorToCode(e: unknown): string {
+  if (e instanceof APIError) {
+    const code = (e.body as { code?: string } | undefined)?.code;
+    switch (code) {
+      case "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL":
+        return "user_already_exists";
+      case "PASSWORD_TOO_SHORT":
+        return "password_too_short";
+      default:
+        return e.body?.message ? String(e.body.message) : "signup_failed";
+    }
+  }
+  return "signup_failed";
 }
 
 export default function SignupPage({
@@ -73,54 +90,50 @@ function SignupForm({
   searchParams: Promise<{ error?: string; signedup?: string }>;
   signup: (fd: FormData) => Promise<void>;
 }) {
+  const field =
+    "w-full border border-line bg-panel px-3 py-2.5 text-[13px] placeholder:text-muted2 focus:outline-none focus:border-ink";
   return (
-    <main className="mx-auto max-w-sm p-6">
-      <h1 className="text-xl font-semibold mb-1">Create student account</h1>
-      <p className="text-sm text-slate-500 mb-4">
+    <main className="mx-auto max-w-sm px-6 py-16 text-ink">
+      <h1 className="font-serif text-2xl tracking-tight mb-1">Create your account</h1>
+      <p className="text-[13px] text-muted mb-6">
         You need an invite code from your tutor.
       </p>
       <Suspense fallback={null}>
         <SignupError searchParams={searchParams} />
       </Suspense>
-      <form action={signup} className="space-y-3 mt-2">
+      <form action={signup} className="space-y-3">
         <input
           name="displayName"
           placeholder="Display name (shown on leaderboard)"
           required
-          className="w-full border rounded px-3 py-2"
+          className={field}
         />
-        <input
-          name="email"
-          type="email"
-          placeholder="Email"
-          required
-          className="w-full border rounded px-3 py-2"
-        />
+        <input name="email" type="email" placeholder="Email" required className={field} />
         <input
           name="password"
           type="password"
           placeholder="Password (min 8 characters)"
           required
           minLength={8}
-          className="w-full border rounded px-3 py-2"
+          className={field}
         />
         <input
           name="inviteCode"
           placeholder="Invite code"
           required
-          className="w-full border rounded px-3 py-2 uppercase"
+          className={`${field} uppercase`}
         />
         <button
           type="submit"
-          className="w-full bg-slate-900 text-white rounded px-3 py-2 hover:bg-slate-800"
+          className="w-full bg-rust text-paper px-3 py-2.5 text-[12px] font-medium uppercase tracking-[0.07em] hover:bg-[#8f4a28]"
         >
           Sign up
         </button>
       </form>
-      <p className="text-sm text-slate-500 mt-4">
+      <p className="text-[13px] text-muted mt-6">
         Already have an account?{" "}
-        <Link href="/login" className="text-blue-600">
-          Log in
+        <Link href="/login" className="text-rust hover:underline underline-offset-2">
+          Sign in
         </Link>
       </p>
     </main>
@@ -135,8 +148,8 @@ async function SignupError({
   const params = await searchParams;
   if (params.signedup) {
     return (
-      <p className="text-green-700 text-sm bg-green-50 rounded px-3 py-2">
-        Account created. Log in below.
+      <p className="mb-4 border border-line bg-panel px-3 py-2 text-[13px] text-success">
+        ✓ Account created. Sign in below.
       </p>
     );
   }
@@ -149,6 +162,6 @@ async function SignupError({
   };
   const msg = messages[params.error] ?? decodeURIComponent(params.error);
   return (
-    <p className="text-red-700 text-sm bg-red-50 rounded px-3 py-2">{msg}</p>
+    <p className="mb-4 border border-line bg-panel px-3 py-2 text-[13px] text-error">✕ {msg}</p>
   );
 }

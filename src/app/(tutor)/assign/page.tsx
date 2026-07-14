@@ -44,20 +44,20 @@ export default async function AssignPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Assign homework</h1>
-        <p className="text-sm text-slate-500">
+        <h1 className="font-serif text-2xl tracking-tight">Assign homework</h1>
+        <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
           Pick a published version, choose students, set an optional due date.
         </p>
       </div>
 
       {versionOptions.length === 0 ? (
-        <div className="rounded-lg border bg-white p-8 text-center text-slate-500">
+        <p className="border border-line bg-panel px-4 py-8 text-center text-[13px] text-muted">
           No published sets yet. Publish a set first.
-        </div>
+        </p>
       ) : students.length === 0 ? (
-        <div className="rounded-lg border bg-white p-8 text-center text-slate-500">
+        <p className="border border-line bg-panel px-4 py-8 text-center text-[13px] text-muted">
           No students on your roster yet.
-        </div>
+        </p>
       ) : (
         <AssignForm versionOptions={versionOptions} students={students} />
       )}

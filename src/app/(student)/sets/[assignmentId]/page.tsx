@@ -111,14 +111,17 @@ export default async function AssignmentSolverPage({
   if (issued.kind === "complete") {
     return (
       <AssignmentHeader title={assignment.version.set.title} progress={assignment.progress} total={total}>
-        <div className="rounded-lg border bg-white p-8 text-center">
-          <p className="text-lg font-medium text-green-700">
+        <div className="border border-line bg-panel p-8 text-center">
+          <p className="font-serif text-lg tracking-tight text-success">
             {assignment.completed ? "Assignment complete! 🎉" : "No more puzzles match this assignment."}
           </p>
-          <p className="text-sm text-slate-500 mt-1">
+          <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
             You solved {assignment.progress} of {total}.
           </p>
-          <Link href="/dashboard" className="mt-4 inline-block text-blue-600 hover:underline">
+          <Link
+            href="/dashboard"
+            className="mt-4 inline-block text-[12px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
+          >
             ← Back to dashboard
           </Link>
         </div>
