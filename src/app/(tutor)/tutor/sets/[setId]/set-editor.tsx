@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { BoardPreview } from "@/components/chess/board-preview";
 
 type Mode = "MANUAL" | "FILTER";
 
@@ -100,7 +101,7 @@ export function SetEditor({
 
 // ── MANUAL editor ──
 
-type SearchResult = { id: string; rating: number; themes: string[] };
+type SearchResult = { id: string; rating: number; themes: string[]; startFen: string; openingTags: string[] };
 
 function ManualEditor({
   setId,
@@ -257,29 +258,34 @@ function ManualEditor({
         </form>
 
         {results && (
-          <ul className="mt-3 divide-y divide-line border border-line max-h-64 overflow-auto">
+          <ul className="mt-3 divide-y divide-line border border-line max-h-[28rem] overflow-auto">
             {results.length === 0 ? (
               <li className="p-3 text-[13px] text-muted">No puzzles match.</li>
             ) : (
               results.map((p) => {
                 const inSet = alreadyInSet.has(p.id);
                 return (
-                  <li key={p.id} className="flex items-center justify-between p-2">
-                    <div className="flex items-center gap-2 text-[13px]">
-                      <span className="font-mono text-ink">{p.id}</span>
-                      <span className="text-[10px] uppercase tracking-[0.06em] px-1.5 py-0.5 border border-line text-muted">
-                        {p.rating}
-                      </span>
-                      {p.themes.slice(0, 2).map((t) => (
-                        <span key={t} className="text-[10px] uppercase tracking-[0.06em] px-1.5 py-0.5 border border-info text-info">
-                          {t}
+                  <li key={p.id} className="flex items-center gap-3 p-2">
+                    <div className="shrink-0">
+                      <BoardPreview fen={p.startFen} maxWidth={72} />
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-1 text-[13px]">
+                      <p className="font-mono text-ink break-all">{p.id}</p>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] uppercase tracking-[0.06em] px-1.5 py-0.5 border border-line text-muted">
+                          {p.rating}
                         </span>
-                      ))}
+                        {p.themes.slice(0, 2).map((t) => (
+                          <span key={t} className="text-[10px] uppercase tracking-[0.06em] px-1.5 py-0.5 border border-info text-info">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                     <button
                       onClick={() => addFromSearch(p.id)}
                       disabled={disabled || inSet}
-                      className="text-rust text-[12px] hover:underline disabled:opacity-40"
+                      className="text-rust text-[12px] hover:underline disabled:opacity-40 shrink-0"
                     >
                       {inSet ? "added" : "add"}
                     </button>

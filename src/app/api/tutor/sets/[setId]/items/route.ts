@@ -3,10 +3,40 @@ import { db } from "@/lib/db";
 import { getTutorActor } from "@/lib/auth-guards";
 import {
   addPuzzleItemTx,
+  getOwnedSetOrThrow,
   removePuzzleItemTx,
   reorderItemsTx,
   tutorErrorResponse,
 } from "@/lib/tutor/sets";
+
+/**
+ * GET /api/tutor/sets/[setId]/items — list the puzzle IDs in a MANUAL set's
+ * draft. Used by the library browser to mark already-added puzzles.
+ */
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ setId: string }> }
+) {
+  const tutor = await getTutorActor();
+  if (!tutor) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const { setId } = await params;
+  try {
+    const items = await db.$transaction(async (tx) => {
+      await getOwnedSetOrThrow(tx, tutor, setId);
+      return tx.puzzleSetItem.findMany({
+        where: { setId },
+        select: { puzzleId: true },
+        orderBy: { order: "asc" },
+      });
+    });
+    return NextResponse.json({ puzzleIds: items.map((i) => i.puzzleId) });
+  } catch (e) {
+    const res = tutorErrorResponse(e);
+    if (res) return NextResponse.json(res.body, { status: res.status });
+    throw e;
+  }
+}
 
 /**
  * POST /api/tutor/sets/[setId]/items — add a puzzle to a MANUAL set's draft.
