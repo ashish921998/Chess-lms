@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { APIError } from "better-auth";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { AuthShell } from "@/components/auth-shell";
 
 async function signup(formData: FormData) {
   "use server";
@@ -73,70 +75,100 @@ function errorToCode(e: unknown): string {
   return "signup_failed";
 }
 
+const field =
+  "w-full border border-line bg-panel px-3.5 py-3 text-[13px] text-ink placeholder:text-muted2 focus:outline-none focus:border-ink transition-colors";
+const labelCls =
+  "mb-1.5 block font-mono text-[10px] uppercase tracking-[0.12em] text-muted2";
+
 export default function SignupPage({
   searchParams,
 }: {
   searchParams: Promise<{ error?: string; signedup?: string }>;
 }) {
-  return <SignupForm searchParams={searchParams} signup={signup} />;
-}
-
-import { Suspense } from "react";
-
-function SignupForm({
-  searchParams,
-  signup,
-}: {
-  searchParams: Promise<{ error?: string; signedup?: string }>;
-  signup: (fd: FormData) => Promise<void>;
-}) {
-  const field =
-    "w-full border border-line bg-panel px-3 py-2.5 text-[13px] placeholder:text-muted2 focus:outline-none focus:border-ink";
   return (
-    <main className="mx-auto max-w-sm px-6 py-16 text-ink">
-      <h1 className="font-serif text-2xl tracking-tight mb-1">Create your account</h1>
-      <p className="text-[13px] text-muted mb-6">
+    <AuthShell
+      image="/chess-student.jpg"
+      imageAlt="A chessboard mid-game"
+      caption="Every grandmaster started with a single move. Make yours."
+    >
+      <h1 className="font-serif text-3xl tracking-tight text-ink">Create your account</h1>
+      <p className="mt-2 text-[13px] text-muted">
         You need an invite code from your tutor.
       </p>
+
       <Suspense fallback={null}>
         <SignupError searchParams={searchParams} />
       </Suspense>
-      <form action={signup} className="space-y-3">
-        <input
-          name="displayName"
-          placeholder="Display name (shown on leaderboard)"
-          required
-          className={field}
-        />
-        <input name="email" type="email" placeholder="Email" required className={field} />
-        <input
-          name="password"
-          type="password"
-          placeholder="Password (min 8 characters)"
-          required
-          minLength={8}
-          className={field}
-        />
-        <input
-          name="inviteCode"
-          placeholder="Invite code"
-          required
-          className={`${field} uppercase`}
-        />
+
+      <form action={signup} className="mt-6 space-y-4">
+        <div>
+          <label htmlFor="displayName" className={labelCls}>
+            Display name
+          </label>
+          <input
+            id="displayName"
+            name="displayName"
+            placeholder="Shown on the leaderboard"
+            required
+            className={field}
+          />
+        </div>
+        <div>
+          <label htmlFor="email" className={labelCls}>
+            Email
+          </label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="you@example.com"
+            autoComplete="email"
+            required
+            className={field}
+          />
+        </div>
+        <div>
+          <label htmlFor="password" className={labelCls}>
+            Password
+          </label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            placeholder="Min 8 characters"
+            autoComplete="new-password"
+            required
+            minLength={8}
+            className={field}
+          />
+        </div>
+        <div>
+          <label htmlFor="inviteCode" className={labelCls}>
+            Invite code
+          </label>
+          <input
+            id="inviteCode"
+            name="inviteCode"
+            placeholder="From your tutor"
+            required
+            className={`${field} uppercase`}
+          />
+        </div>
         <button
           type="submit"
-          className="w-full bg-rust text-paper px-3 py-2.5 text-[12px] font-medium uppercase tracking-[0.07em] hover:bg-[#8f4a28]"
+          className="mt-2 w-full bg-rust px-3 py-3 text-[12px] font-medium uppercase tracking-[0.1em] text-paper transition-colors hover:bg-[#8f4a28]"
         >
           Sign up
         </button>
       </form>
-      <p className="text-[13px] text-muted mt-6">
+
+      <p className="mt-8 text-[13px] text-muted">
         Already have an account?{" "}
-        <Link href="/login" className="text-rust hover:underline underline-offset-2">
+        <Link href="/login" className="text-rust underline underline-offset-2 hover:text-[#8f4a28]">
           Sign in
         </Link>
       </p>
-    </main>
+    </AuthShell>
   );
 }
 
@@ -148,7 +180,7 @@ async function SignupError({
   const params = await searchParams;
   if (params.signedup) {
     return (
-      <p className="mb-4 border border-line bg-panel px-3 py-2 text-[13px] text-success">
+      <p className="mt-6 border border-line bg-panel px-3.5 py-2.5 text-[13px] text-success">
         ✓ Account created. Sign in below.
       </p>
     );
@@ -162,6 +194,8 @@ async function SignupError({
   };
   const msg = messages[params.error] ?? decodeURIComponent(params.error);
   return (
-    <p className="mb-4 border border-line bg-panel px-3 py-2 text-[13px] text-error">✕ {msg}</p>
+    <p className="mt-6 border border-line bg-panel px-3.5 py-2.5 text-[13px] text-error">
+      ✕ {msg}
+    </p>
   );
 }

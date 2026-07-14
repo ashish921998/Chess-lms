@@ -4,6 +4,11 @@ import { useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "@/lib/auth-client";
 
+const field =
+  "w-full border border-line bg-panel px-3.5 py-3 text-[13px] text-ink placeholder:text-muted2 focus:outline-none focus:border-ink transition-colors";
+const label =
+  "mb-1.5 block font-mono text-[10px] uppercase tracking-[0.12em] text-muted2";
+
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -28,25 +33,39 @@ export function LoginForm() {
   return (
     <>
       <LoginNotice searchParams={searchParams} />
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <input
-          name="email"
-          type="email"
-          placeholder="Email"
-          required
-          className="w-full border border-line bg-panel px-3 py-2.5 text-[13px] placeholder:text-muted2 focus:outline-none focus:border-ink"
-        />
-        <input
-          name="password"
-          type="password"
-          placeholder="Password"
-          required
-          className="w-full border border-line bg-panel px-3 py-2.5 text-[13px] placeholder:text-muted2 focus:outline-none focus:border-ink"
-        />
+      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <div>
+          <label htmlFor="email" className={label}>
+            Email
+          </label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="you@example.com"
+            autoComplete="email"
+            required
+            className={field}
+          />
+        </div>
+        <div>
+          <label htmlFor="password" className={label}>
+            Password
+          </label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            placeholder="••••••••"
+            autoComplete="current-password"
+            required
+            className={field}
+          />
+        </div>
         <button
           type="submit"
           disabled={pending}
-          className="w-full bg-rust text-paper px-3 py-2.5 text-[12px] font-medium uppercase tracking-[0.07em] hover:bg-[#8f4a28] disabled:opacity-50"
+          className="mt-2 w-full bg-rust px-3 py-3 text-[12px] font-medium uppercase tracking-[0.1em] text-paper transition-colors hover:bg-[#8f4a28] disabled:opacity-50"
         >
           {pending ? "Signing in…" : "Sign in"}
         </button>
@@ -58,7 +77,7 @@ export function LoginForm() {
 function LoginNotice({ searchParams }: { searchParams: URLSearchParams }) {
   if (searchParams.get("signedup")) {
     return (
-      <p className="mb-4 border border-line bg-panel px-3 py-2 text-[13px] text-success">
+      <p className="mt-6 border border-line bg-panel px-3.5 py-2.5 text-[13px] text-success">
         ✓ Account created. Sign in below.
       </p>
     );
@@ -66,7 +85,7 @@ function LoginNotice({ searchParams }: { searchParams: URLSearchParams }) {
   const error = searchParams.get("error");
   if (error) {
     return (
-      <p className="mb-4 border border-line bg-panel px-3 py-2 text-[13px] text-error">
+      <p className="mt-6 border border-line bg-panel px-3.5 py-2.5 text-[13px] text-error">
         ✕ {decodeURIComponent(error)}
       </p>
     );
