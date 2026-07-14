@@ -4,10 +4,10 @@ import { sweepStaleAttemptsTx, isCronAuthorized } from "@/lib/gamification/cron"
 
 /**
  * /api/cron/sweep-attempts — abandon PENDING attempts older than 2h.
- * Hourly (vercel.json). CRON_SECRET-protected and idempotent: already-terminal
- * attempts are skipped by the `WHERE status = 'PENDING'` gate. Abandoned
- * attempts award nothing and write no StudentPuzzle, so the puzzle can be
- * re-served.
+ * Daily at 04:00 UTC (vercel.json). CRON_SECRET-protected and idempotent:
+ * already-terminal attempts are skipped by the `WHERE status = 'PENDING'` gate.
+ * Abandoned attempts award nothing and write no StudentPuzzle, so the puzzle
+ * can be re-served.
  *
  * Vercel Cron invokes the path with GET, so GET is the primary export. POST is
  * kept as an alias for manual triggering (same CRON_SECRET gate).
