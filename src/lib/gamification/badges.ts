@@ -28,18 +28,23 @@ export type BadgeAttempt = {
 /**
  * Evaluate every badge at the end of a SOLVED finalize. All upserts are
  * idempotent (`ON CONFLICT ([studentId, badgeKey]) DO NOTHING`) so re-finalize
- * never duplicates. `streak` is passed in (already computed in finalize step 6)
- * to avoid re-querying DailyProgress. Only the *current puzzle's* themes are
- * evaluated for theme_master — the badge naturally fires when a solve pushes a
- * theme to 20. (spec §1d.)
+ * never duplicates. Only the *current puzzle's* themes are evaluated for
+ * theme_master — the badge naturally fires when a solve pushes a theme to 20.
+ * (spec §1d.)
+ *
+ * `ctx.streak` is the POST-SOLVE streak, computed by the finalize coordinator
+ * (step 6) and passed in via a typed context so this dependency on call order
+ * is explicit — this must be the streak *after* the solve's DailyProgress
+ * upsert, not before.
  */
 export async function evaluateBadgesTx(
   tx: PrismaTransaction,
   attempt: BadgeAttempt,
-  streak: number
+  ctx: { streak: number }
 ): Promise<string[]> {
   const awarded: string[] = [];
   const { studentId } = attempt;
+  const { streak } = ctx;
 
   // first_solve — this is the student's first SOLVED attempt.
   const priorSolved = await tx.attempt.count({

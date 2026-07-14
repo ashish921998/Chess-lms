@@ -3,11 +3,11 @@ import { db } from "@/lib/db";
 import { getStudentActor } from "@/lib/auth-guards";
 import { validateMove } from "@/lib/puzzles/validate";
 import {
-  finalizeSolvedTx,
-  finalizeFailedTx,
+  recordSolve,
+  recordFail,
   FAIL_LIMIT,
   type FinalizeAttempt,
-} from "@/lib/puzzles/finalize";
+} from "@/lib/attempts/finalize";
 import { Chess } from "chess.js";
 
 /**
@@ -74,7 +74,7 @@ export async function POST(
       const newFailCount = attempt.failCount + 1;
       if (newFailCount >= FAIL_LIMIT) {
         await db.$transaction((tx) =>
-          finalizeFailedTx(tx, toFinalizeAttempt(attempt, studentRow.timezone))
+          recordFail(tx, toFinalizeAttempt(attempt, studentRow.timezone))
         );
         return NextResponse.json({ status: "failed", failCount: newFailCount });
       }
@@ -112,10 +112,16 @@ export async function POST(
     }
 
     case "solved": {
-      const coinsAwarded = await db.$transaction((tx) =>
-        finalizeSolvedTx(tx, toFinalizeAttempt(attempt, studentRow.timezone))
+      const outcome = await db.$transaction((tx) =>
+        recordSolve(tx, toFinalizeAttempt(attempt, studentRow.timezone))
       );
-      return NextResponse.json({ status: "solved", coinsAwarded });
+      return NextResponse.json({
+        status: "solved",
+        coinsAwarded: outcome.coinsAwarded,
+        streak: outcome.streak,
+        badgesAwarded: outcome.badgesAwarded,
+        ratingDelta: outcome.ratingDelta,
+      });
     }
   }
 }

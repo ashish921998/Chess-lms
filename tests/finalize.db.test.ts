@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { withRollbackTx, seedFixture } from "./db-harness";
-import { finalizeSolvedTx, type FinalizeAttempt } from "@/lib/puzzles/finalize";
+import { recordSolve, type FinalizeAttempt } from "@/lib/attempts/finalize";
 import type { PrismaTransaction } from "@/lib/puzzles/transaction-client";
 
 /**
  * DB integration tests for the finalize fork + gap-fills (gates #7, #8, #9,
- * #15, #17). Drives `finalizeSolvedTx` directly inside a rollback tx.
+ * #15, #17). Drives `recordSolve` directly inside a rollback tx.
  *
  * Concurrency note (gate #7): true parallel races aren't reproducible under a
  * single rollback transaction, so the LEAST cap is asserted by sequential
@@ -54,13 +54,13 @@ async function makeAttempt(
   return { row, attempt };
 }
 
-describe("finalizeSolvedTx — auto-queue (gate #17 regression)", () => {
+describe("recordSolve — auto-queue (gate #17 regression)", () => {
   it("an auto-queue solve (assignmentId == null) does not touch any assignment", async () => {
     await withRollbackTx(async (tx) => {
       const fx = await seedFixture(tx);
       const { attempt } = await makeAttempt(tx, fx.studentId, "pz-1500-mate");
 
-      await finalizeSolvedTx(tx, attempt);
+      await recordSolve(tx, attempt);
 
       const a = await tx.attempt.findUniqueOrThrow({ where: { id: attempt.id } });
       expect(a.status).toBe("SOLVED");
@@ -73,7 +73,7 @@ describe("finalizeSolvedTx — auto-queue (gate #17 regression)", () => {
   });
 });
 
-describe("finalizeSolvedTx — MANUAL (gates #8, #9)", () => {
+describe("recordSolve — MANUAL (gates #8, #9)", () => {
   it("solving a non-last item does NOT complete the assignment (gate #8)", async () => {
     await withRollbackTx(async (tx) => {
       const fx = await seedFixture(tx);
@@ -88,7 +88,7 @@ describe("finalizeSolvedTx — MANUAL (gates #8, #9)", () => {
         assignmentId: assignment.id,
         assignmentItemId: items[0].id,
       });
-      await finalizeSolvedTx(tx, attempt);
+      await recordSolve(tx, attempt);
 
       const a = await tx.assignment.findUniqueOrThrow({ where: { id: assignment.id } });
       expect(a.progress).toBe(1);
@@ -110,7 +110,7 @@ describe("finalizeSolvedTx — MANUAL (gates #8, #9)", () => {
           assignmentId: assignment.id,
           assignmentItemId: items[0].id,
         });
-        await finalizeSolvedTx(tx, attempt);
+        await recordSolve(tx, attempt);
       }
       // Solve item 2 — the last.
       {
@@ -118,7 +118,7 @@ describe("finalizeSolvedTx — MANUAL (gates #8, #9)", () => {
           assignmentId: assignment.id,
           assignmentItemId: items[1].id,
         });
-        await finalizeSolvedTx(tx, attempt);
+        await recordSolve(tx, attempt);
       }
 
       const a = await tx.assignment.findUniqueOrThrow({ where: { id: assignment.id } });
@@ -138,7 +138,7 @@ describe("finalizeSolvedTx — MANUAL (gates #8, #9)", () => {
         assignmentId: assignment.id,
         assignmentItemId: items[0].id,
       });
-      await finalizeSolvedTx(tx, attempt);
+      await recordSolve(tx, attempt);
 
       const item = await tx.assignmentItemProgress.findUniqueOrThrow({
         where: { id: items[0].id },
@@ -153,7 +153,7 @@ describe("finalizeSolvedTx — MANUAL (gates #8, #9)", () => {
   });
 });
 
-describe("finalizeSolvedTx — FILTER (gates #7, #15)", () => {
+describe("recordSolve — FILTER (gates #7, #15)", () => {
   it("progress is capped at targetCount and never overshoots (gate #7)", async () => {
     await withRollbackTx(async (tx) => {
       const fx = await seedFixture(tx);
@@ -165,7 +165,7 @@ describe("finalizeSolvedTx — FILTER (gates #7, #15)", () => {
           assignmentId: assignment.id,
           assignmentItemId: null,
         });
-        await finalizeSolvedTx(tx, attempt);
+        await recordSolve(tx, attempt);
       }
       // Solve #2 — reaches the target.
       {
@@ -173,7 +173,7 @@ describe("finalizeSolvedTx — FILTER (gates #7, #15)", () => {
           assignmentId: assignment.id,
           assignmentItemId: null,
         });
-        await finalizeSolvedTx(tx, attempt);
+        await recordSolve(tx, attempt);
       }
       let a = await tx.assignment.findUniqueOrThrow({ where: { id: assignment.id } });
       expect(a.progress).toBe(2);
@@ -185,7 +185,7 @@ describe("finalizeSolvedTx — FILTER (gates #7, #15)", () => {
           assignmentId: assignment.id,
           assignmentItemId: null,
         });
-        await finalizeSolvedTx(tx, attempt);
+        await recordSolve(tx, attempt);
       }
       a = await tx.assignment.findUniqueOrThrow({ where: { id: assignment.id } });
       expect(a.progress).toBe(2); // capped, never 3
@@ -207,9 +207,9 @@ describe("finalizeSolvedTx — FILTER (gates #7, #15)", () => {
         assignmentItemId: null,
         isReplay: true,
       });
-      const coins = await finalizeSolvedTx(tx, attempt);
+      const outcome = await recordSolve(tx, attempt);
 
-      expect(coins).toBe(0); // replay — no coins
+      expect(outcome.coinsAwarded).toBe(0); // replay — no coins
       const a = await tx.assignment.findUniqueOrThrow({ where: { id: assignment.id } });
       expect(a.progress).toBe(1); // but it still counts → completes
       expect(a.completed).toBe(true);

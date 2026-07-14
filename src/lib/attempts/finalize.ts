@@ -2,12 +2,23 @@ import { eloDelta, kFactorFor } from "@/lib/rating";
 import { localDateFor } from "@/lib/gamification/dates";
 import { currentStreak, awardStreakBonusesTx } from "@/lib/gamification/streaks";
 import { evaluateBadgesTx } from "@/lib/gamification/badges";
-import type { PrismaTransaction } from "./transaction-client";
+import { creditLedger } from "@/lib/ledger";
+import { SOLVE_REWARD_NO_HINT, SOLVE_REWARD_HINTED, GOAL_BONUS } from "@/lib/economy";
+import type { PrismaTransaction } from "@/lib/puzzles/transaction-client";
 
-const SOLVE_REWARD_NO_HINT = 10;
-const SOLVE_REWARD_HINTED = 5;
+/**
+ * Attempt finalization — the deep coordinator that turns a terminal move into
+ * its full effect on coins, rating, streaks, badges, and assignment progress.
+ *
+ * This module owns the *ordering* of a solve (the invariant that badges see the
+ * post-solve streak, that Elo skips replays, that goal/streak bonuses credit
+ * once). The gamification/rating pieces stay pure evaluators behind the seam;
+ * this is the only place that composes them. The public face is two functions —
+ * `recordSolve` / `recordFail` — each returning what happened.
+ */
+
+/** Wrong moves allowed before an attempt finalizes as FAILED. */
 export const FAIL_LIMIT = 2;
-const GOAL_BONUS = 50;
 
 /**
  * The fields of an `Attempt` (+ its puzzle) that finalization needs. Matches
@@ -29,30 +40,43 @@ export type FinalizeAttempt = {
   puzzle: { rating: number; startFen: string; solutionMoves: string[]; themes: string[] };
 };
 
+/** Everything a solve produced — the interface the coordinator hides behind. */
+export type SolveOutcome = {
+  /** Solve reward only (0 on replay). Goal/streak bonuses land in the balance. */
+  coinsAwarded: number;
+  isReplay: boolean;
+  /** Current streak after this solve. */
+  streak: number;
+  /** Badge keys newly earned by this solve. */
+  badgesAwarded: string[];
+  /** Elo change, or null when Elo was skipped (replay). */
+  ratingDelta: number | null;
+};
+
+/** Everything a fail produced. */
+export type FailOutcome = {
+  ratingDelta: number | null;
+};
+
 /**
- * Finalize a SOLVED attempt in one atomic transaction. Extracted (and the route
- * wraps it in `db.$transaction`) so tests can drive it inside a rollback tx.
+ * Finalize a SOLVED attempt in one atomic transaction. The move route wraps it
+ * in `db.$transaction`; tests drive it inside a rollback tx.
  *
  * Steps:
  *  1. Conditional status flip (PENDING → SOLVED) — concurrent finalizes no-op.
- *  2. Ledger credit via ON CONFLICT DO NOTHING RETURNING (first solve credits;
- *     replays get nothing).
+ *  2. Ledger credit (first solve credits; replays get nothing).
  *  3. Write StudentPuzzle (anti-repeat) — only on solve.
  *  4. Upsert DailyProgress, award goal bonus if threshold met.
  *  5. Elo update (serialized via Student-row FOR UPDATE) — replays skip.
- *  6. Assignment progress — THREE-WAY FORK (spec §Gap-fills #2):
- *     - assignmentItemId != null → MANUAL: item flip + atomic progress increment
- *       + COMPLETION GAP-FILL (conditional flip against version item count).
- *     - assignmentId != null && assignmentItemId == null && targetCount != null
- *       → FILTER: LEAST(progress+1, targetCount) + conditional completion flip.
- *     - assignmentId == null → auto-queue: skip (unchanged).
+ *  6. Streaks — compute the post-solve streak, award any crossed-tier bonuses.
+ *  7. Badges — evaluated against the post-solve streak.
+ *  8. Assignment progress — MANUAL / FILTER / auto-queue fork.
  */
-export async function finalizeSolvedTx(
+export async function recordSolve(
   tx: PrismaTransaction,
   attempt: FinalizeAttempt
-): Promise<number> {
+): Promise<SolveOutcome> {
   const reward = attempt.usedHint ? SOLVE_REWARD_HINTED : SOLVE_REWARD_NO_HINT;
-  const idempotencyKey = `solve:${attempt.studentId}:${attempt.puzzleId}`;
 
   // 1. Conditional status flip.
   const flipped = await tx.$executeRaw`
@@ -60,30 +84,34 @@ export async function finalizeSolvedTx(
     WHERE id = ${attempt.id} AND status = 'PENDING'
   `;
   if (flipped === 0) {
-    // Race lost — another request already finalized this attempt.
-    // Return the coinsAwarded already on the row.
+    // Race lost — another request already finalized this attempt. Report this
+    // request's (truthful) view: the coins already on the row, no new badges,
+    // the current streak, no rating change.
     const existing = await tx.attempt.findUniqueOrThrow({ where: { id: attempt.id } });
-    return existing.coinsAwarded;
+    const raceDate = localDateFor(new Date(), attempt.timezone);
+    return {
+      coinsAwarded: existing.coinsAwarded,
+      isReplay: existing.isReplay,
+      streak: await currentStreak(tx, attempt.studentId, raceDate),
+      badgesAwarded: [],
+      ratingDelta: null,
+    };
   }
 
-  // 2. Ledger credit via ON CONFLICT DO NOTHING RETURNING.
-  const creditRow = await tx.$queryRaw<{ id: string }[]>`
-    INSERT INTO "CoinTransaction" (id, "studentId", amount, reason, "idempotencyKey", "refId", "createdAt")
-    VALUES (gen_random_uuid(), ${attempt.studentId}, ${reward}, ${attempt.usedHint ? "SOLVE_HINTED" : "SOLVE"}, ${idempotencyKey}, ${attempt.id}, NOW())
-    ON CONFLICT ("idempotencyKey") DO NOTHING RETURNING id
-  `;
-
-  const isReplaySolve = creditRow.length === 0; // no row returned = already solved before
+  // 2. Ledger credit. A returned false means the solve credit already existed —
+  //    i.e. this puzzle was solved-for-coins before (a replay solve).
+  const credited = await creditLedger(tx, {
+    studentId: attempt.studentId,
+    amount: reward,
+    reason: attempt.usedHint ? "SOLVE_HINTED" : "SOLVE",
+    idempotencyKey: `solve:${attempt.studentId}:${attempt.puzzleId}`,
+    refId: attempt.id,
+  });
+  const isReplaySolve = !credited;
 
   if (!isReplaySolve) {
-    // First-ever solve of this puzzle — credit coins.
-    await tx.student.update({
-      where: { id: attempt.studentId },
-      data: { coinBalance: { increment: reward }, lifetimeCoins: { increment: reward } },
-    });
     await tx.attempt.update({ where: { id: attempt.id }, data: { coinsAwarded: reward } });
   } else {
-    // Replay — no coins, mark the attempt.
     await tx.attempt.update({ where: { id: attempt.id }, data: { coinsAwarded: 0, isReplay: true } });
   }
 
@@ -95,7 +123,7 @@ export async function finalizeSolvedTx(
   `;
 
   // 4. DailyProgress — the student's local calendar date, so streak/daily-goal
-  //    boundaries respect their timezone (a 11pm EST solve counts toward EST's
+  //    boundaries respect their timezone (an 11pm EST solve counts toward EST's
   //    date, not the next UTC day).
   const dateOnly = localDateFor(new Date(), attempt.timezone);
   const dp = await tx.dailyProgress.upsert({
@@ -108,16 +136,13 @@ export async function finalizeSolvedTx(
   const studentRow = await tx.student.findUniqueOrThrow({ where: { id: attempt.studentId } });
   if (dp.solvedCount >= studentRow.dailyGoal && !dp.goalBonusAwarded) {
     const goalKey = `goal:${attempt.studentId}:${dateOnly.toISOString().slice(0, 10)}`;
-    const goalCredit = await tx.$queryRaw<{ id: string }[]>`
-      INSERT INTO "CoinTransaction" (id, "studentId", amount, reason, "idempotencyKey", "createdAt")
-      VALUES (gen_random_uuid(), ${attempt.studentId}, ${GOAL_BONUS}, 'GOAL_BONUS', ${goalKey}, NOW())
-      ON CONFLICT ("idempotencyKey") DO NOTHING RETURNING id
-    `;
-    if (goalCredit.length > 0) {
-      await tx.student.update({
-        where: { id: attempt.studentId },
-        data: { coinBalance: { increment: GOAL_BONUS }, lifetimeCoins: { increment: GOAL_BONUS } },
-      });
+    const goalCredited = await creditLedger(tx, {
+      studentId: attempt.studentId,
+      amount: GOAL_BONUS,
+      reason: "GOAL_BONUS",
+      idempotencyKey: goalKey,
+    });
+    if (goalCredited) {
       await tx.dailyProgress.update({
         where: { studentId_date: { studentId: attempt.studentId, date: dateOnly } },
         data: { goalBonusAwarded: true, goalMet: true },
@@ -131,19 +156,19 @@ export async function finalizeSolvedTx(
   }
 
   // 5. Elo update — replays skip entirely.
+  let ratingDelta: number | null = null;
   if (!attempt.isReplay && !isReplaySolve) {
-    await applyEloTx(tx, attempt.studentId, attempt.puzzle.rating, 1, "SOLVED", attempt.id);
+    ratingDelta = await applyEloTx(tx, attempt.studentId, attempt.puzzle.rating, 1, "SOLVED", attempt.id);
   }
 
-  // 6. Streaks — compute the current streak from DailyProgress (the upsert in
-  //    step 4 already reflects this solve) and award any newly-crossed tier
-  //    bonuses (7-day +100, 30-day +250), each idempotent via its ledger key.
+  // 6. Streaks — compute the streak from DailyProgress (step 4 already reflects
+  //    this solve) and award any newly-crossed tier bonuses.
   const streak = await currentStreak(tx, attempt.studentId, dateOnly);
   await awardStreakBonusesTx(tx, attempt.studentId, streak);
 
-  // 7. Badges — celebrate positive milestones. Evaluated only on SOLVED; all
-  //    upserts are idempotent. `streak` is passed in to avoid re-querying.
-  await evaluateBadgesTx(
+  // 7. Badges — evaluated against the post-solve streak (passed via a typed
+  //    context so the dependency on step 6 is explicit, not a bare int).
+  const badgesAwarded = await evaluateBadgesTx(
     tx,
     {
       id: attempt.id,
@@ -152,24 +177,60 @@ export async function finalizeSolvedTx(
       themes: attempt.puzzle.themes,
       createdAt: attempt.createdAt,
     },
-    streak
+    { streak }
   );
 
   // 8. Assignment progress — three-way fork.
   await updateAssignmentProgress(tx, attempt);
 
-  return isReplaySolve ? 0 : reward;
+  return {
+    coinsAwarded: isReplaySolve ? 0 : reward,
+    isReplay: isReplaySolve,
+    streak,
+    badgesAwarded,
+    ratingDelta,
+  };
 }
 
 /**
- * The assignment-progress fork. Split out so it's the single place the MANUAL /
- * FILTER / auto-queue distinction lives, and so tests can drive it directly.
+ * Finalize a FAILED attempt: apply Elo with actual=0 (rating drops), unless this
+ * is a replay (replays skip Elo entirely per the spec).
+ */
+export async function recordFail(
+  tx: PrismaTransaction,
+  attempt: FinalizeAttempt
+): Promise<FailOutcome> {
+  const flipped = await tx.$executeRaw`
+    UPDATE "Attempt" SET status = 'FAILED', "finalizedAt" = NOW(), revision = revision + 1
+    WHERE id = ${attempt.id} AND status = 'PENDING'
+  `;
+  if (flipped === 0) return { ratingDelta: null }; // race lost
+
+  let ratingDelta: number | null = null;
+  if (!attempt.isReplay) {
+    ratingDelta = await applyEloTx(tx, attempt.studentId, attempt.puzzle.rating, 0, "FAILED", attempt.id);
+  }
+
+  // Increment assignment item attempts (engagement tracking, not rating).
+  if (attempt.assignmentItemId) {
+    await tx.assignmentItemProgress.update({
+      where: { id: attempt.assignmentItemId },
+      data: { attempts: { increment: 1 } },
+    });
+  }
+
+  return { ratingDelta };
+}
+
+/**
+ * The assignment-progress fork — the single place the MANUAL / FILTER /
+ * auto-queue distinction lives. Private: driven through `recordSolve`.
  *
  * Replay neutrality (gate #15): progress is updated regardless of whether this
  * solve was a coin/elo-awarding first solve or a replay — every SOLVED attempt
  * serving an assignment counts.
  */
-export async function updateAssignmentProgress(
+async function updateAssignmentProgress(
   tx: PrismaTransaction,
   attempt: FinalizeAttempt
 ): Promise<void> {
@@ -242,8 +303,8 @@ export async function updateAssignmentProgress(
 /**
  * Apply an Elo rating update for one attempt, serialized via the Student row
  * lock. `actual` is 1 for a solve, 0 for a fail; `outcome` is the RatingEvent
- * label. Shared by the SOLVED and FAILED finalize paths (it was previously
- * duplicated nearly verbatim). Replays are skipped by the caller, not here.
+ * label. Shared by the SOLVED and FAILED paths. Returns the applied delta.
+ * Replays are skipped by the caller, not here.
  */
 async function applyEloTx(
   tx: PrismaTransaction,
@@ -252,7 +313,7 @@ async function applyEloTx(
   actual: 0 | 1,
   outcome: "SOLVED" | "FAILED",
   attemptId: string
-): Promise<void> {
+): Promise<number> {
   await tx.$executeRaw`SELECT 1 FROM "Student" WHERE id = ${studentId} FOR UPDATE`;
   const lockedStudent = await tx.student.findUniqueOrThrow({ where: { id: studentId } });
   const ratedCount = await tx.ratingEvent.count({ where: { studentId } });
@@ -268,33 +329,5 @@ async function applyEloTx(
   await tx.ratingEvent.create({
     data: { studentId, rating: newRating, outcome, delta, attemptId },
   });
-}
-
-/**
- * Finalize a FAILED attempt: apply Elo with actual=0 (rating drops), unless
- * this is a replay (replays skip Elo entirely per the spec). Extracted so tests
- * can drive it inside a rollback tx.
- */
-export async function finalizeFailedTx(
-  tx: PrismaTransaction,
-  attempt: FinalizeAttempt
-): Promise<void> {
-  const flipped = await tx.$executeRaw`
-    UPDATE "Attempt" SET status = 'FAILED', "finalizedAt" = NOW(), revision = revision + 1
-    WHERE id = ${attempt.id} AND status = 'PENDING'
-  `;
-  if (flipped === 0) return; // race lost
-
-  // Elo with actual=0 — but replays skip entirely.
-  if (!attempt.isReplay) {
-    await applyEloTx(tx, attempt.studentId, attempt.puzzle.rating, 0, "FAILED", attempt.id);
-  }
-
-  // Increment assignment item attempts (engagement tracking, not rating).
-  if (attempt.assignmentItemId) {
-    await tx.assignmentItemProgress.update({
-      where: { id: attempt.assignmentItemId },
-      data: { attempts: { increment: 1 } },
-    });
-  }
+  return delta;
 }

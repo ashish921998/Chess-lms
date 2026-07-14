@@ -1,10 +1,6 @@
 import type { PrismaTransaction } from "@/lib/puzzles/transaction-client";
-
-/** Streak-bonus thresholds and their one-time awards. */
-export const STREAK_TIERS = [
-  { days: 7, bonus: 100 },
-  { days: 30, bonus: 250 },
-] as const;
+import { STREAK_TIERS } from "@/lib/economy";
+import { creditLedger } from "@/lib/ledger";
 
 /**
  * Current streak: consecutive goal-met days ending today (or yesterday if today
@@ -66,8 +62,8 @@ export async function currentStreak(
 /**
  * Award any newly-crossed streak-tier bonuses. Idempotent: each tier credits at
  * most once via an `ON CONFLICT (idempotencyKey) DO NOTHING RETURNING` ledger
- * row keyed `streak:{studentId}:{days}`. Called from finalizeSolvedTx step 6
- * with the freshly-computed streak.
+ * row keyed `streak:{studentId}:{days}`. Called from recordSolve step 6 with
+ * the freshly-computed streak.
  */
 export async function awardStreakBonusesTx(
   tx: PrismaTransaction,
@@ -76,18 +72,12 @@ export async function awardStreakBonusesTx(
 ): Promise<void> {
   for (const tier of STREAK_TIERS) {
     if (streak < tier.days) continue;
-    const key = `streak:${studentId}:${tier.days}`;
-    const credited = await tx.$queryRaw<{ id: string }[]>`
-      INSERT INTO "CoinTransaction" (id, "studentId", amount, reason, "idempotencyKey", "createdAt")
-      VALUES (gen_random_uuid(), ${studentId}, ${tier.bonus}, 'STREAK_BONUS', ${key}, NOW())
-      ON CONFLICT ("idempotencyKey") DO NOTHING RETURNING id
-    `;
-    if (credited.length > 0) {
-      await tx.student.update({
-        where: { id: studentId },
-        data: { coinBalance: { increment: tier.bonus }, lifetimeCoins: { increment: tier.bonus } },
-      });
-    }
+    await creditLedger(tx, {
+      studentId,
+      amount: tier.bonus,
+      reason: "STREAK_BONUS",
+      idempotencyKey: `streak:${studentId}:${tier.days}`,
+    });
   }
 }
 

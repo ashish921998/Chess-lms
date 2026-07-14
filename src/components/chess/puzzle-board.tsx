@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { Chessboard } from "react-chessboard";
 import { Chess } from "chess.js";
 import Link from "next/link";
+import { HINT_COST, SKIP_COST } from "@/lib/economy";
 
 type BoardStatus = "playing" | "incorrect" | "failed" | "solved" | "skipped";
 
@@ -16,9 +17,6 @@ type Props = {
   usedHint: boolean;
   hintMove: string | null;
 };
-
-const HINT_COST = 15;
-const SKIP_COST = 30;
 
 /**
  * Interactive puzzle board. The client NEVER knows the solution — it posts each

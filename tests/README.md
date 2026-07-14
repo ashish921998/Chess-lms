@@ -30,7 +30,7 @@ Vitest. Two flavors:
 interactive `$transaction` that always rolls back. The body receives the
 transaction client (`tx`); pass it into the `*Tx` form of the code under test.
 
-This is why M3 extracts `finalizeSolvedTx(tx, …)` instead of only exposing the
+This is why finalization extracts `recordSolve(tx, …)` instead of only exposing the
 `db.$transaction(...)` wrapper: the wrapper would commit outside the rollback
 scope and tests would leak state across each other.
 
