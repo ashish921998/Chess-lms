@@ -1,9 +1,19 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireStudent } from "@/lib/auth-guards";
+import { badgeLabel } from "@/lib/gamification/badges";
+import { currentStreak } from "@/lib/gamification/streaks";
+import { localDateFor } from "@/lib/gamification/dates";
+import { TimezoneSelect } from "./timezone-select";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * /profile — Layout B (split identity + dark stats + badges).
+ *
+ * Left --panel: Lichess connection + timezone. Right --ink dark panel: stats
+ * (one dark card per group per DESIGN.md). Full-width --panel below: badges.
+ */
 export default async function ProfilePage({
   searchParams,
 }: {
@@ -14,90 +24,133 @@ export default async function ProfilePage({
 
   const student = await db.student.findUniqueOrThrow({
     where: { id: me.id },
-    include: { lichess: true },
+    include: {
+      lichess: true,
+      badges: { orderBy: { awardedAt: "desc" } },
+    },
   });
+
+  const streak = await currentStreak(db, me.id, localDateFor(new Date(), student.timezone));
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-bold">Profile</h1>
+      <h1 className="font-serif text-3xl tracking-tight">Profile</h1>
 
-      <section className="rounded-lg border bg-white p-6 space-y-4">
-        <div className="flex justify-between items-center">
+      {/* Identity + timezone (left) + dark stats (right). */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Left: Lichess + timezone. */}
+        <section className="border border-line bg-panel p-6 space-y-6">
           <div>
-            <h2 className="text-lg font-semibold">Lichess Connection</h2>
-            <p className="text-sm text-slate-500">
-              Link your Lichess account to calibrate puzzles to your rating.
-            </p>
-          </div>
-          {student.lichess ? (
-            <span className="text-green-700 text-sm font-medium bg-green-50 px-3 py-1.5 rounded">
-              ✓ Connected as {student.lichess.lichessUsername}
-            </span>
-          ) : (
-            <a
-              href="/api/auth/lichess/start"
-              className="bg-slate-900 text-white text-sm px-4 py-2 rounded hover:bg-slate-800"
-            >
-              Connect Lichess
-            </a>
-          )}
-        </div>
-
-        {params.lichess === "connected" && (
-          <p className="text-green-700 text-sm bg-green-50 rounded px-3 py-2">
-            Lichess account connected! Your rating has been synced.
-          </p>
-        )}
-        {params.lichess_error && (
-          <p className="text-red-700 text-sm bg-red-50 rounded px-3 py-2">
-            Failed to connect: {decodeURIComponent(params.lichess_error)}
-          </p>
-        )}
-
-        {student.lichess && (
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="text-slate-500">Lichess puzzle rating:</span>{" "}
-              <span className="font-medium">{student.lichessPuzzleRating ?? "—"}</span>
-            </div>
-            <div>
-              <span className="text-slate-500">Lichess game rating:</span>{" "}
-              <span className="font-medium">{student.lichessGameRating ?? "—"}</span>
-            </div>
-            <div>
-              <span className="text-slate-500">Last synced:</span>{" "}
-              <span className="font-medium">
-                {student.lichess.lastSyncedAt
-                  ? new Date(student.lichess.lastSyncedAt).toLocaleString()
-                  : "—"}
-              </span>
+            <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted2">Lichess</h2>
+            <div className="mt-3">
+              {student.lichess ? (
+                <div className="space-y-3">
+                  <p className="text-[13px] text-success">
+                    ✓ Connected as {student.lichess.lichessUsername}
+                  </p>
+                  <dl className="grid grid-cols-1 gap-2 text-[12px]">
+                    <div className="flex justify-between">
+                      <dt className="text-muted">Puzzle rating</dt>
+                      <dd className="font-mono text-ink">{student.lichessPuzzleRating ?? "—"}</dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-muted">Game rating</dt>
+                      <dd className="font-mono text-ink">{student.lichessGameRating ?? "—"}</dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-muted">Last synced</dt>
+                      <dd className="font-mono text-ink">
+                        {student.lichess.lastSyncedAt
+                          ? new Date(student.lichess.lastSyncedAt).toLocaleDateString()
+                          : "—"}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              ) : (
+                <a
+                  href="/api/auth/lichess/start"
+                  className="inline-block bg-ink text-paper px-4 py-2 text-[11px] font-medium uppercase tracking-[0.07em] hover:bg-[#3a3630]"
+                >
+                  Connect Lichess
+                </a>
+              )}
             </div>
           </div>
+          <TimezoneSelect current={student.timezone} />
+        </section>
+
+        {/* Right: dark stats panel. */}
+        <section className="border border-ink bg-ink text-paper p-6">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#b3ab9c]">Stats</h2>
+          <dl className="mt-4 grid grid-cols-2 gap-y-5">
+            <Stat label="Rating" value={student.inAppRating} accent />
+            <Stat label="Coins" value={student.coinBalance} accent />
+            <Stat label="Streak" value={`${streak}d`} />
+            <Stat label="Daily goal" value={`${student.dailyGoal}`} />
+          </dl>
+        </section>
+      </div>
+
+      {params.lichess === "connected" && (
+        <p className="border border-line bg-panel px-3 py-2 text-[13px] text-success">
+          Lichess account connected! Your rating has been synced.
+        </p>
+      )}
+      {params.lichess_error && (
+        <p className="border border-line bg-panel px-3 py-2 text-[13px] text-error">
+          Failed to connect: {decodeURIComponent(params.lichess_error)}
+        </p>
+      )}
+
+      {/* Badges — full-width below. */}
+      <section className="border border-line bg-panel p-6">
+        <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted2">
+          Badges · {student.badges.length} earned
+        </h2>
+        {student.badges.length === 0 ? (
+          <p className="mt-4 text-[13px] text-muted">No badges yet — keep solving.</p>
+        ) : (
+          <ul className="mt-4 flex flex-wrap gap-2">
+            {student.badges.map((b, i) => (
+              <li
+                key={b.id}
+                className={`px-3 py-1 text-[10px] uppercase tracking-[0.08em] ${
+                  i === 0
+                    ? "border border-rust text-rust"
+                    : "border border-line text-muted2"
+                }`}
+              >
+                {badgeLabel(b.badgeKey)}
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 
-      <section className="rounded-lg border bg-white p-6 space-y-3">
-        <h2 className="text-lg font-semibold">Stats</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <Stat label="In-app rating" value={student.inAppRating} />
-          <Stat label="Coins" value={student.coinBalance} />
-          <Stat label="Lifetime coins" value={student.lifetimeCoins} />
-          <Stat label="Daily goal" value={`${student.dailyGoal} puzzles`} />
-        </div>
-      </section>
-
-      <Link href="/dashboard" className="text-blue-600 hover:underline">
+      <Link
+        href="/dashboard"
+        className="text-[12px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
+      >
         ← Back to dashboard
       </Link>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string | number }) {
+function Stat({
+  label,
+  value,
+  accent = false,
+}: {
+  label: string;
+  value: number | string;
+  accent?: boolean;
+}) {
   return (
     <div>
-      <div className="text-slate-500">{label}</div>
-      <div className="text-lg font-semibold">{value}</div>
+      <dt className="text-[10px] uppercase tracking-[0.1em] text-[#b3ab9c]">{label}</dt>
+      <dd className={`font-serif text-3xl mt-1 ${accent ? "text-rust" : "text-paper"}`}>{value}</dd>
     </div>
   );
 }

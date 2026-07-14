@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireStudent } from "@/lib/auth-guards";
-import { signOut as signOutClient } from "@/lib/auth-client";
 import { versionTotal } from "@/lib/puzzles/version-total";
-import { SignOutButton } from "./sign-out-button";
+import { currentStreak } from "@/lib/gamification/streaks";
+import { localDateFor } from "@/lib/gamification/dates";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +29,15 @@ export default async function Dashboard({
   const solvedCount = await db.attempt.count({
     where: { studentId: me.id, status: "SOLVED" },
   });
+
+  // Streak + today's solve count (timezone-correct local date).
+  const todayLocal = localDateFor(new Date(), student.timezone);
+  const streak = await currentStreak(db, me.id, todayLocal);
+  const todayProgress = await db.dailyProgress.findUnique({
+    where: { studentId_date: { studentId: me.id, date: todayLocal } },
+  });
+  const solvedToday = todayProgress?.solvedCount ?? 0;
+  const goalMet = solvedToday >= student.dailyGoal;
 
   // Puzzles available for practice (M1: all seeded puzzles, no rating filtering yet).
   const availablePuzzles = await db.puzzle.findMany({
@@ -74,55 +83,58 @@ export default async function Dashboard({
   );
 
   return (
-    <div className="space-y-8">
-      <div className="flex justify-between items-start">
-        <div>
-          <h1 className="text-2xl font-bold">Welcome, {student.displayName}</h1>
-          <p className="text-slate-500">
-            Rating {student.inAppRating} · {solvedCount} solved · {student.coinBalance} coins
-          </p>
-        </div>
-        <SignOutButton />
+    <div className="space-y-10">
+      <div>
+        <h1 className="font-serif text-3xl tracking-tight">Welcome, {student.displayName}</h1>
+        <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
+          Rating {student.inAppRating} · {solvedCount} solved · {student.coinBalance} coins
+        </p>
+        <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
+          <span className={goalMet ? "text-rust" : ""}>
+            {solvedToday}/{student.dailyGoal} today
+          </span>
+        </p>
       </div>
 
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <StatCard label="Current Rating" value={student.inAppRating} />
         <StatCard label="Coins" value={student.coinBalance} />
+        <StatCard label="Streak" value={`${streak}d`} accent />
         <StatCard label="Solved" value={solvedCount} />
       </section>
 
       {params.queue === "complete" && (
-        <p className="text-amber-700 text-sm bg-amber-50 rounded px-3 py-2">
-          You've solved all available puzzles in your rating range! Try again later —
+        <p className="border border-line bg-panel px-3 py-2 text-[13px] text-warning">
+          ◆ You&apos;ve solved all available puzzles in your rating range. Try again later —
           new puzzles may be added, or your rating may shift the window.
         </p>
       )}
 
       {assignments.length > 0 && (
         <section>
-          <h2 className="text-lg font-semibold mb-3">Assignments</h2>
+          <SectionLabel>Assignments</SectionLabel>
           <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {assignments.map((a) => {
               const total = versionTotal(a.version);
+              const replays = replayCountByAssignment.get(a.id);
               const cta = a.completed
                 ? "Review"
                 : a.progress > 0
                 ? "Continue"
                 : "Start";
+              const overdue = !a.completed && a.dueDate && a.dueDate < new Date();
               return (
-                <li key={a.id} className="rounded-lg border bg-white p-4">
+                <li key={a.id} className="border border-line bg-panel p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <div className="font-medium">{a.version.set.title}</div>
-                      <div className="text-sm text-slate-500 mt-0.5">
+                      <div className="font-serif text-lg">{a.version.set.title}</div>
+                      <div className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
                         {a.progress}/{total}{" "}
                         {a.version.mode === "FILTER" ? "solved" : "puzzles"}
                         {a.completed && (
-                          <span className="text-green-700">
-                            {replayCountByAssignment.get(a.id)
-                              ? ` · done (${replayCountByAssignment.get(a.id)} replay${
-                                  replayCountByAssignment.get(a.id) === 1 ? "" : "s"
-                                })`
+                          <span className="text-success">
+                            {replays
+                              ? ` · done (${replays} replay${replays === 1 ? "" : "s"})`
                               : " · done"}
                           </span>
                         )}
@@ -130,10 +142,10 @@ export default async function Dashboard({
                     </div>
                     {a.dueDate && (
                       <div
-                        className={`text-xs px-2 py-0.5 rounded whitespace-nowrap ${
-                          !a.completed && a.dueDate < new Date()
-                            ? "bg-red-50 text-red-700"
-                            : "bg-slate-100 text-slate-600"
+                        className={`text-[10px] uppercase tracking-[0.06em] px-2 py-1 whitespace-nowrap border ${
+                          overdue
+                            ? "border-error text-error"
+                            : "border-line text-muted"
                         }`}
                       >
                         due {a.dueDate.toLocaleDateString()}
@@ -142,7 +154,7 @@ export default async function Dashboard({
                   </div>
                   <Link
                     href={`/sets/${a.id}`}
-                    className="mt-3 inline-block text-sm text-blue-600 hover:underline"
+                    className="mt-3 inline-block text-[12px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
                   >
                     {cta} →
                   </Link>
@@ -154,27 +166,27 @@ export default async function Dashboard({
       )}
 
       <section>
-        <div className="flex justify-between items-center mb-3">
-          <h2 className="text-lg font-semibold">Puzzles</h2>
+        <div className="flex justify-between items-center mb-4">
+          <SectionLabel className="mb-0">Puzzles</SectionLabel>
           <Link
             href="/practice"
-            className="text-sm bg-slate-900 text-white px-3 py-1.5 rounded hover:bg-slate-800"
+            className="bg-ink text-paper px-4 py-2 text-[11px] font-medium uppercase tracking-[0.07em] hover:bg-[#3a3630]"
           >
             Start daily practice →
           </Link>
         </div>
-        <ul className="divide-y rounded-lg border bg-white">
+        <ul className="border border-line bg-panel divide-y divide-line">
           {availablePuzzles.map((p) => (
             <li key={p.id} className="flex justify-between items-center p-4">
-              <div>
-                <span className="font-mono text-sm text-slate-500">{p.id}</span>
-                <span className="ml-3 inline-block bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded">
+              <div className="flex items-center gap-3">
+                <span className="text-[13px] text-muted">{p.id}</span>
+                <span className="border border-line text-muted text-[10px] uppercase tracking-[0.06em] px-2 py-0.5">
                   {p.rating}
                 </span>
                 {p.themes.map((t) => (
                   <span
                     key={t}
-                    className="ml-2 inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded"
+                    className="border border-line text-rust text-[10px] uppercase tracking-[0.06em] px-2 py-0.5"
                   >
                     {t}
                   </span>
@@ -182,7 +194,7 @@ export default async function Dashboard({
               </div>
               <Link
                 href={`/practice/${p.id}`}
-                className="text-blue-600 text-sm hover:underline"
+                className="text-[12px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
               >
                 Solve →
               </Link>
@@ -193,19 +205,13 @@ export default async function Dashboard({
 
       {student.attempts.length > 0 && (
         <section>
-          <h2 className="text-lg font-semibold mb-3">Recent activity</h2>
-          <ul className="divide-y rounded-lg border bg-white">
+          <SectionLabel>Recent activity</SectionLabel>
+          <ul className="border border-line bg-panel divide-y divide-line">
             {student.attempts.map((a) => (
-              <li key={a.id} className="flex justify-between p-3 text-sm">
-                <span className="font-mono text-slate-500">{a.puzzle.id}</span>
-                <span
-                  className={
-                    a.status === "SOLVED"
-                      ? "text-green-700 font-medium"
-                      : "text-red-700"
-                  }
-                >
-                  {a.status === "SOLVED" ? "✓ Solved" : "✗ Failed"}
+              <li key={a.id} className="flex justify-between p-3 text-[13px]">
+                <span className="text-muted">{a.puzzle.id}</span>
+                <span className={a.status === "SOLVED" ? "text-success" : "text-error"}>
+                  {a.status === "SOLVED" ? "✓ Solved" : "✕ Failed"}
                 </span>
               </li>
             ))}
@@ -216,11 +222,25 @@ export default async function Dashboard({
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number | string }) {
+function SectionLabel({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <div className="rounded-lg border bg-white p-4">
-      <div className="text-sm text-slate-500">{label}</div>
-      <div className="text-2xl font-bold mt-1">{value}</div>
+    <h2 className={`mb-4 text-[11px] font-medium uppercase tracking-[0.14em] text-muted2 ${className}`}>
+      {children}
+    </h2>
+  );
+}
+
+function StatCard({ label, value, accent = false }: { label: string; value: number | string; accent?: boolean }) {
+  return (
+    <div className="border border-line bg-panel p-4">
+      <div className="text-[10px] uppercase tracking-[0.1em] text-muted">{label}</div>
+      <div className={`font-serif text-3xl mt-1 ${accent ? "text-rust" : ""}`}>{value}</div>
     </div>
   );
 }

@@ -53,6 +53,12 @@ export async function POST(
     );
   }
 
+  // The student's timezone drives the daily-progress date boundary.
+  const studentRow = await db.student.findUniqueOrThrow({
+    where: { id: student.id },
+    select: { timezone: true },
+  });
+
   const result = validateMove({
     startFen: attempt.puzzle.startFen,
     solutionMoves: attempt.puzzle.solutionMoves,
@@ -67,7 +73,9 @@ export async function POST(
     case "incorrect": {
       const newFailCount = attempt.failCount + 1;
       if (newFailCount >= FAIL_LIMIT) {
-        await db.$transaction((tx) => finalizeFailedTx(tx, toFinalizeAttempt(attempt)));
+        await db.$transaction((tx) =>
+          finalizeFailedTx(tx, toFinalizeAttempt(attempt, studentRow.timezone))
+        );
         return NextResponse.json({ status: "failed", failCount: newFailCount });
       }
       // Advance revision (wrong move counted), stay PENDING.
@@ -105,7 +113,7 @@ export async function POST(
 
     case "solved": {
       const coinsAwarded = await db.$transaction((tx) =>
-        finalizeSolvedTx(tx, toFinalizeAttempt(attempt))
+        finalizeSolvedTx(tx, toFinalizeAttempt(attempt, studentRow.timezone))
       );
       return NextResponse.json({ status: "solved", coinsAwarded });
     }
@@ -122,8 +130,10 @@ function toFinalizeAttempt(
     isReplay: boolean;
     assignmentId: string | null;
     assignmentItemId: string | null;
-    puzzle: { rating: number; startFen: string; solutionMoves: string[] };
-  }
+    createdAt: Date;
+    puzzle: { rating: number; startFen: string; solutionMoves: string[]; themes: string[] };
+  },
+  timezone: string
 ): FinalizeAttempt {
   return {
     id: attempt.id,
@@ -133,6 +143,8 @@ function toFinalizeAttempt(
     isReplay: attempt.isReplay,
     assignmentId: attempt.assignmentId,
     assignmentItemId: attempt.assignmentItemId,
+    timezone,
+    createdAt: attempt.createdAt,
     puzzle: attempt.puzzle,
   };
 }

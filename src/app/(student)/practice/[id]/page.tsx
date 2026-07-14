@@ -22,6 +22,12 @@ export default async function PracticePage({
   const puzzle = await db.puzzle.findUnique({ where: { id: puzzleId } });
   if (!puzzle) notFound();
 
+  // Coin balance drives the hint/skip disabled states + confirm popover.
+  const student = await db.student.findUniqueOrThrow({
+    where: { id: me.id },
+    select: { coinBalance: true },
+  });
+
   // Single-flight: lock the student, check for existing PENDING, create if none.
   // (Same logic as POST /api/attempts, but in-process for a server component.)
   const attempt = await db.$transaction(async (tx) => {
@@ -78,19 +84,22 @@ export default async function PracticePage({
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-xl font-semibold">
+          <h1 className="font-serif text-xl tracking-tight">
             Puzzle ·{" "}
-            <span className="font-mono text-slate-500">{puzzle.id}</span>
+            <span className="font-mono text-muted text-[14px]">{puzzle.id}</span>
           </h1>
-          <p className="text-sm text-slate-500">
+          <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
             Rating {puzzle.rating}
             {puzzle.themes.length > 0 && ` · ${puzzle.themes.join(", ")}`}
             {attempt.isReplay && (
-              <span className="ml-2 text-amber-600">· replay (no coins)</span>
+              <span className="ml-2 text-warning">· replay (no coins)</span>
             )}
           </p>
         </div>
-        <a href="/dashboard" className="text-sm text-slate-500 hover:text-slate-900">
+        <a
+          href="/dashboard"
+          className="text-[12px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
+        >
           ← Back
         </a>
       </div>
@@ -100,6 +109,9 @@ export default async function PracticePage({
         startFen={fen}
         solutionLength={puzzle.solutionMoves.length}
         initialRevision={attempt.revision}
+        coinBalance={student.coinBalance}
+        usedHint={attempt.usedHint}
+        hintMove={attempt.hintMove}
       />
     </div>
   );

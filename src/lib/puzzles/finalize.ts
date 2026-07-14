@@ -1,4 +1,7 @@
 import { eloDelta, kFactorFor } from "@/lib/rating";
+import { localDateFor } from "@/lib/gamification/dates";
+import { currentStreak, awardStreakBonusesTx } from "@/lib/gamification/streaks";
+import { evaluateBadgesTx } from "@/lib/gamification/badges";
 import type { PrismaTransaction } from "./transaction-client";
 
 const SOLVE_REWARD_NO_HINT = 10;
@@ -19,7 +22,11 @@ export type FinalizeAttempt = {
   isReplay: boolean;
   assignmentId: string | null;
   assignmentItemId: string | null;
-  puzzle: { rating: number; startFen: string; solutionMoves: string[] };
+  /** Student's IANA tz — daily boundaries use their local calendar date. */
+  timezone: string;
+  /** Attempt creation time — used for the "comeback" badge's preceding-attempt query. */
+  createdAt: Date;
+  puzzle: { rating: number; startFen: string; solutionMoves: string[]; themes: string[] };
 };
 
 /**
@@ -87,9 +94,10 @@ export async function finalizeSolvedTx(
     ON CONFLICT ("studentId", "puzzleId") DO UPDATE SET "lastSeenAt" = NOW(), "timesSeen" = "StudentPuzzle"."timesSeen" + 1
   `;
 
-  // 4. DailyProgress — today in the student's local timezone.
-  const today = new Date(); // M1: assume UTC; M4 will use the student's IANA tz
-  const dateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  // 4. DailyProgress — the student's local calendar date, so streak/daily-goal
+  //    boundaries respect their timezone (a 11pm EST solve counts toward EST's
+  //    date, not the next UTC day).
+  const dateOnly = localDateFor(new Date(), attempt.timezone);
   const dp = await tx.dailyProgress.upsert({
     where: { studentId_date: { studentId: attempt.studentId, date: dateOnly } },
     update: { solvedCount: { increment: 1 } },
@@ -127,7 +135,27 @@ export async function finalizeSolvedTx(
     await applyEloTx(tx, attempt.studentId, attempt.puzzle.rating, 1, "SOLVED", attempt.id);
   }
 
-  // 6. Assignment progress — three-way fork.
+  // 6. Streaks — compute the current streak from DailyProgress (the upsert in
+  //    step 4 already reflects this solve) and award any newly-crossed tier
+  //    bonuses (7-day +100, 30-day +250), each idempotent via its ledger key.
+  const streak = await currentStreak(tx, attempt.studentId, dateOnly);
+  await awardStreakBonusesTx(tx, attempt.studentId, streak);
+
+  // 7. Badges — celebrate positive milestones. Evaluated only on SOLVED; all
+  //    upserts are idempotent. `streak` is passed in to avoid re-querying.
+  await evaluateBadgesTx(
+    tx,
+    {
+      id: attempt.id,
+      studentId: attempt.studentId,
+      puzzleId: attempt.puzzleId,
+      themes: attempt.puzzle.themes,
+      createdAt: attempt.createdAt,
+    },
+    streak
+  );
+
+  // 8. Assignment progress — three-way fork.
   await updateAssignmentProgress(tx, attempt);
 
   return isReplaySolve ? 0 : reward;

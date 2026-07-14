@@ -42,10 +42,13 @@ async function makeAttempt(
     isReplay: opts.isReplay ?? false,
     assignmentId: opts.assignmentId ?? null,
     assignmentItemId: opts.assignmentItemId ?? null,
+    timezone: "UTC",
+    createdAt: row.createdAt,
     puzzle: {
       rating: puzzle.rating,
       startFen: START_FEN,
       solutionMoves: puzzle.solutionMoves,
+      themes: puzzle.themes,
     },
   };
   return { row, attempt };

@@ -2,48 +2,54 @@ import Link from "next/link";
 import { requireTutor } from "@/lib/auth-guards";
 import { db } from "@/lib/db";
 import { versionTotal } from "@/lib/puzzles/version-total";
+import { InviteCodes, type InviteView } from "./invite-codes";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Roster-lite (the tutor landing). One row per student: name, rating,
- * last-active, and a per-student assignment summary. Per the spec, the per-
- * assignment progress shows "solved/total items" for MANUAL and
- * "progress/targetCount, completed?" for FILTER. Defer /students/[id] to M4.
+ * Roster (the tutor landing). One card per student: name (a link to the
+ * per-student detail page), rating, active-assignment count, last-active, and
+ * recent assignment chips. Hosts the invite-code panel (the only join path).
  */
 export default async function RosterPage() {
   const tutor = await requireTutor();
 
-  const students = await db.student.findMany({
-    where: { tutorId: tutor.id },
-    orderBy: { displayName: "asc" },
-    include: {
-      assignments: {
-        orderBy: { createdAt: "desc" },
-        take: 5,
-        include: {
-          version: {
-            select: {
-              mode: true,
-              targetCount: true,
-              set: { select: { title: true } },
-              _count: { select: { items: true } },
+  const [students, inviteRows] = await Promise.all([
+    db.student.findMany({
+      where: { tutorId: tutor.id },
+      orderBy: { displayName: "asc" },
+      include: {
+        assignments: {
+          orderBy: { createdAt: "desc" },
+          take: 5,
+          include: {
+            version: {
+              select: {
+                mode: true,
+                targetCount: true,
+                set: { select: { title: true } },
+                _count: { select: { items: true } },
+              },
             },
           },
         },
+        attempts: {
+          where: { status: { in: ["SOLVED", "FAILED"] } },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { createdAt: true },
+        },
       },
-      attempts: {
-        where: { status: { in: ["SOLVED", "FAILED"] } },
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        select: { createdAt: true },
-      },
-    },
-  });
+    }),
+    db.inviteCode.findMany({
+      where: { tutorId: tutor.id },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, code: true, uses: true, maxUses: true, expiresAt: true, createdAt: true },
+    }),
+  ]);
 
-  // Active (uncompleted) assignment count per student — the "active count" in
-  // the roster summary (spec §Tutor pages). `take: 5` on the include above
-  // prevents deriving it from the included set, so it's a separate groupBy.
+  // Active (uncompleted) assignment count per student — the "active count".
+  // `take: 5` on the include above prevents deriving it from the included set.
   const activeGroups = await db.assignment.groupBy({
     by: ["studentId"],
     where: { student: { tutorId: tutor.id }, completed: false },
@@ -53,59 +59,80 @@ export default async function RosterPage() {
     activeGroups.map((g) => [g.studentId, g._count._all])
   );
 
+  const invites: InviteView[] = inviteRows.map((i) => ({
+    id: i.id,
+    code: i.code,
+    uses: i.uses,
+    maxUses: i.maxUses,
+    expiresAt: i.expiresAt ? i.expiresAt.toISOString() : null,
+    createdAt: i.createdAt.toISOString(),
+  }));
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold">Roster</h1>
-          <p className="text-sm text-slate-500">{students.length} students</p>
-        </div>
+      <div>
+        <h1 className="font-serif text-2xl tracking-tight">Roster</h1>
+        <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
+          {students.length} students
+        </p>
       </div>
 
+      <InviteCodes invites={invites} />
+
       {students.length === 0 ? (
-        <div className="rounded-lg border bg-white p-8 text-center text-slate-500">
-          No students yet. Students join with your invite code.
-        </div>
+        <p className="border border-line bg-panel px-4 py-8 text-center text-[13px] text-muted">
+          No students yet. Generate an invite code above and share it.
+        </p>
       ) : (
         <ul className="space-y-3">
-          {students.map((s) => (
-            <li key={s.id} className="rounded-lg border bg-white p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="font-medium">{s.displayName}</span>
-                  <span className="ml-3 text-sm text-slate-500">Rating {s.inAppRating}</span>
-                  {activeCountByStudent.has(s.id) && (
-                    <span className="ml-3 text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded">
-                      {activeCountByStudent.get(s.id)} active
-                    </span>
-                  )}
-                </div>
-                <span className="text-sm text-slate-500">
-                  {s.attempts[0]
-                    ? `Active ${formatRelative(s.attempts[0].createdAt)}`
-                    : "No activity"}
-                </span>
-              </div>
-
-              {s.assignments.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {s.assignments.map((a) => (
-                    <span
-                      key={a.id}
-                      className={`text-xs px-2 py-1 rounded ${
-                        a.completed
-                          ? "bg-green-50 text-green-700"
-                          : "bg-slate-100 text-slate-700"
-                      }`}
+          {students.map((s) => {
+            const active = activeCountByStudent.get(s.id);
+            return (
+              <li key={s.id} className="border border-line bg-panel p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-baseline gap-3">
+                    <Link
+                      href={`/students/${s.id}`}
+                      className="font-serif text-lg tracking-tight hover:text-rust"
                     >
-                      {a.version.set.title}: {a.progress}/{versionTotal(a.version)}
-                      {a.completed && " ✓"}
+                      {s.displayName}
+                    </Link>
+                    <span className="text-[12px] uppercase tracking-[0.05em] text-muted">
+                      Rating <span className="text-rust">{s.inAppRating}</span>
                     </span>
-                  ))}
+                    {active ? (
+                      <span className="text-[10px] uppercase tracking-[0.06em] border border-warning text-warning px-2 py-0.5">
+                        {active} active
+                      </span>
+                    ) : null}
+                  </div>
+                  <span className="text-[12px] uppercase tracking-[0.05em] text-muted">
+                    {s.attempts[0]
+                      ? `Active ${formatRelative(s.attempts[0].createdAt)}`
+                      : "No activity"}
+                  </span>
                 </div>
-              )}
-            </li>
-          ))}
+
+                {s.assignments.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {s.assignments.map((a) => (
+                      <span
+                        key={a.id}
+                        className={`text-[10px] uppercase tracking-[0.06em] px-2 py-1 border ${
+                          a.completed
+                            ? "border-success/40 text-success"
+                            : "border-line text-muted"
+                        }`}
+                      >
+                        {a.version.set.title}: {a.progress}/{versionTotal(a.version)}
+                        {a.completed && " ✓"}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

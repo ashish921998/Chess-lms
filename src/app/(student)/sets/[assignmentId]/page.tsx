@@ -30,6 +30,12 @@ export default async function AssignmentSolverPage({
   const me = await requireStudent();
   const { assignmentId } = await params;
 
+  // Coin balance drives the hint/skip disabled states + confirm popover.
+  const balanceRow = await db.student.findUniqueOrThrow({
+    where: { id: me.id },
+    select: { coinBalance: true },
+  });
+
   // Load the assignment; 404 if it isn't this student's (never reveal existence).
   const assignment = await db.assignment.findUnique({
     where: { id: assignmentId },
@@ -141,15 +147,18 @@ export default async function AssignmentSolverPage({
     <AssignmentHeader title={assignment.version.set.title} progress={assignment.progress} total={total}>
       <div className="flex justify-between items-center">
         <div>
-          <p className="text-sm text-slate-500">
+          <p className="text-[12px] uppercase tracking-[0.05em] text-muted">
             Rating {puzzle.rating}
             {puzzle.themes.length > 0 && ` · ${puzzle.themes.join(", ")}`}
             {attempt.isReplay && (
-              <span className="ml-2 text-amber-600">· replay (no coins)</span>
+              <span className="ml-2 text-warning">· replay (no coins)</span>
             )}
           </p>
         </div>
-        <Link href="/dashboard" className="text-sm text-slate-500 hover:text-slate-900">
+        <Link
+          href="/dashboard"
+          className="text-[12px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
+        >
           ← Back
         </Link>
       </div>
@@ -159,6 +168,9 @@ export default async function AssignmentSolverPage({
         startFen={fen}
         solutionLength={puzzle.solutionMoves.length}
         initialRevision={attempt.revision}
+        coinBalance={balanceRow.coinBalance}
+        usedHint={attempt.usedHint}
+        hintMove={attempt.hintMove}
       />
     </AssignmentHeader>
   );
@@ -179,8 +191,8 @@ function AssignmentHeader({
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-xl font-semibold">{title}</h1>
-          <p className="text-sm text-slate-500">
+          <h1 className="font-serif text-xl tracking-tight">{title}</h1>
+          <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
             Progress {progress}/{total}
           </p>
         </div>
