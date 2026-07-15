@@ -62,25 +62,25 @@ export function InviteCodes({ invites }: { invites: InviteView[] }) {
   }
 
   return (
-    <section className="border border-line bg-panel p-6 space-y-4">
-      <div className="flex items-center justify-between">
+    <section className="surface-card p-5 sm:p-6 space-y-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted2">Invite codes</h2>
-          <p className="mt-1 text-[12px] text-muted">
+          <h2 className="font-serif text-xl tracking-tight">Invite a student</h2>
+          <p className="mt-1 text-[12px] leading-5 text-muted">
             Share a code so a student can sign up and join your roster.
           </p>
         </div>
         <button
           onClick={generate}
           disabled={pending}
-          className="bg-ink text-paper px-4 py-2 text-[11px] font-medium uppercase tracking-[0.07em] hover:bg-[#3a3630] disabled:opacity-50"
+          className="secondary-action shrink-0 disabled:opacity-50"
         >
           {pending ? "…" : "New code"}
         </button>
       </div>
 
       {error && (
-        <p className="text-[12px] text-error border border-line bg-paper px-3 py-2">{error}</p>
+        <p className="rounded-lg border border-error/30 bg-error/5 px-3 py-2 text-[12px] text-error">{error}</p>
       )}
 
       {invites.length === 0 ? (
@@ -88,34 +88,34 @@ export function InviteCodes({ invites }: { invites: InviteView[] }) {
           No active codes. Generate one to add a student.
         </p>
       ) : (
-        <ul className="divide-y divide-line border border-line">
+        <ul className="divide-y divide-line/70 overflow-hidden rounded-xl border border-line bg-paper/40">
           {invites.map((inv) => {
             const usedUp = inv.uses >= inv.maxUses;
             const expired = inv.expiresAt && new Date(inv.expiresAt) < new Date();
             const dead = usedUp || expired;
             return (
-              <li key={inv.id} className="flex items-center gap-3 p-3">
-                <code className="font-mono text-[13px] tracking-wider text-ink">{formatCode(inv.code)}</code>
-                <span className="text-[11px] uppercase tracking-[0.05em] text-muted">
+              <li key={inv.id} className="flex flex-wrap items-center gap-3 p-3.5">
+                <code className="rounded-md bg-ink px-2.5 py-1.5 font-mono text-[12px] font-semibold tracking-wider text-paper">{formatCode(inv.code)}</code>
+                <span className="text-[11px] text-muted">
                   {inv.uses}/{inv.maxUses} used
                   {inv.expiresAt && ` · expires ${new Date(inv.expiresAt).toLocaleDateString()}`}
                 </span>
                 {dead && (
-                  <span className="text-[11px] uppercase tracking-[0.05em] text-muted2">
-                    {usedUp ? "(used up)" : "(expired)"}
+                  <span className="rounded-full bg-shade px-2 py-1 text-[9px] font-bold uppercase tracking-[0.08em] text-muted2">
+                    {usedUp ? "Used" : "Expired"}
                   </span>
                 )}
-                <div className="ml-auto flex gap-3">
+                <div className="ml-auto flex items-center gap-1">
                   <button
                     onClick={() => copy(inv.code)}
-                    className="text-[11px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
+                    className="secondary-action min-h-8 px-2.5"
                   >
                     {copied === inv.code ? "Copied" : "Copy"}
                   </button>
                   <button
                     onClick={() => revoke(inv.id)}
                     disabled={pending}
-                    className="text-[11px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2 disabled:opacity-50"
+                    className="min-h-8 rounded-lg px-2.5 text-[10px] font-semibold text-muted hover:text-error disabled:opacity-50"
                   >
                     Revoke
                   </button>

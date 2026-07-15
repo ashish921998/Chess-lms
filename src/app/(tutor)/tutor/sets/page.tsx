@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireTutor } from "@/lib/auth-guards";
 import { db } from "@/lib/db";
+import { modeLabel } from "@/lib/puzzles/mode-label";
 
 export const dynamic = "force-dynamic";
 
@@ -19,19 +20,14 @@ export default async function SetsPage() {
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="font-serif text-2xl tracking-tight">Puzzle sets</h1>
-        <Link
-          href="/tutor/sets/new"
-          className="bg-rust text-paper px-3 py-1.5 text-[11px] uppercase tracking-[0.07em] hover:opacity-90 active:scale-[0.98]"
-        >
-          New set →
-        </Link>
+    <div className="space-y-9">
+      <div className="page-heading">
+        <div><div className="page-kicker">Course builder</div><h1>Puzzle sets</h1><p>Build focused training collections and reuse them across your roster.</p></div>
+        <Link href="/tutor/sets/new" className="primary-action">New set →</Link>
       </div>
 
       {sets.length === 0 ? (
-        <p className="border border-line bg-panel px-4 py-8 text-center text-[13px] text-muted">
+        <p className="surface-card px-4 py-12 text-center text-[13px] text-muted">
           No sets yet.{" "}
           <Link href="/tutor/sets/new" className="text-rust hover:underline underline-offset-2">
             Create your first set
@@ -39,37 +35,30 @@ export default async function SetsPage() {
           .
         </p>
       ) : (
-        <ul className="divide-y divide-line border border-line bg-panel">
+        <ul className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {sets.map((s) => (
-            <li key={s.id} className="flex justify-between items-center p-4">
+            <li key={s.id} className="surface-card flex min-h-44 flex-col justify-between p-5">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Link
                     href={`/tutor/sets/${s.id}`}
-                    className="font-serif text-lg tracking-tight text-ink hover:text-rust"
+                    className="font-serif text-xl tracking-tight text-ink hover:text-rust"
                   >
                     {s.title}
                   </Link>
                   <ModeBadge mode={s.mode} />
                 </div>
-                <p className="mt-0.5 text-[13px] text-body">
-                  {s.description ?? "—"}
+                <p className="mt-2 line-clamp-2 text-[12px] leading-5 text-body">
+                  {s.description ?? "No description yet."}
                 </p>
               </div>
-              <div className="text-right">
-                <div className="text-[12px] uppercase tracking-[0.05em] text-muted">
-                  {s._count.versions} {s._count.versions === 1 ? "version" : "versions"}
-                </div>
-                {s.mode === "MANUAL" && (
-                  <div className="text-[12px] uppercase tracking-[0.05em] text-muted">
-                    {s._count.items} puzzles
-                  </div>
-                )}
+              <div className="mt-5 flex items-center justify-between border-t border-line/70 pt-4">
+                <div className="text-[10px] text-muted">{s._count.versions} {s._count.versions === 1 ? "version" : "versions"}{s.mode === "MANUAL" ? ` · ${s._count.items} puzzles` : " · adaptive"}</div>
                 <div
-                  className={`mt-1 inline-block text-[10px] uppercase tracking-[0.06em] px-2 py-0.5 border ${
+                  className={`rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.08em] ${
                     s.isPublished
-                      ? "border-success/40 text-success"
-                      : "border-warning text-warning"
+                      ? "bg-success/10 text-success"
+                      : "bg-warning/10 text-warning"
                   }`}
                 >
                   {s.isPublished ? "Published" : "Draft"}
@@ -86,13 +75,13 @@ export default async function SetsPage() {
 function ModeBadge({ mode }: { mode: "MANUAL" | "FILTER" }) {
   return (
     <span
-      className={`text-[10px] uppercase tracking-[0.06em] px-2 py-0.5 border ${
+      className={`rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-[0.08em] ${
         mode === "FILTER"
-          ? "border-info text-info"
-          : "border-line text-muted"
+          ? "bg-info/10 text-info"
+          : "bg-shade text-muted"
       }`}
     >
-      {mode}
+      {modeLabel(mode)}
     </span>
   );
 }

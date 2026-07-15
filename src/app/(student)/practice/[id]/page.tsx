@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { PuzzleBoard } from "@/components/chess/puzzle-board";
 import { Chess } from "chess.js";
 import { notFound } from "next/navigation";
+import { puzzleTitle, humanizeTheme } from "@/lib/puzzles/labels";
 
 export const dynamic = "force-dynamic";
 
@@ -85,14 +86,13 @@ export default async function PracticePage({
       <div className="flex justify-between items-center">
         <div>
           <h1 className="font-serif text-xl tracking-tight">
-            Puzzle ·{" "}
-            <span className="font-mono text-muted text-[14px]">{puzzle.id}</span>
+            {puzzleTitle(puzzle.themes)}
           </h1>
           <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
             Rating {puzzle.rating}
-            {puzzle.themes.length > 0 && ` · ${puzzle.themes.join(", ")}`}
+            {puzzle.themes.length > 0 && ` · ${puzzle.themes.map(humanizeTheme).join(", ")}`}
             {attempt.isReplay && (
-              <span className="ml-2 text-warning">· replay (no coins)</span>
+              <span className="ml-2 text-warning">· already mastered — practice only</span>
             )}
           </p>
         </div>

@@ -28,13 +28,12 @@ export default async function LibraryPage() {
   ]);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="font-serif text-2xl tracking-tight">Puzzle library</h1>
-        <p className="mt-1 text-[13px] text-body">
+    <div className="space-y-9">
+      <div className="page-heading"><div><div className="page-kicker">Curate training material</div>
+        <h1>Puzzle library</h1>
+        <p>
           Browse the catalog, preview positions, and add puzzles to a set.
-        </p>
-      </div>
+        </p></div></div>
 
       {manualSets.length === 0 ? (
         <div className="border border-line bg-panel p-6">

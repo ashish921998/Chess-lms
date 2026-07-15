@@ -202,29 +202,9 @@ function ManualEditor({
     <section className="border border-line bg-panel p-6 space-y-6">
       <h2 className="font-serif text-lg tracking-tight">Puzzles ({items.length})</h2>
 
-      {/* Add by ID */}
+      {/* Search the library (primary way to add puzzles) */}
       <div>
-        <h3 className="mb-2 text-[11px] uppercase tracking-[0.07em] text-muted2">Add by puzzle ID</h3>
-        <form onSubmit={add} className="flex gap-2">
-          <input
-            value={puzzleId}
-            onChange={(e) => setPuzzleId(e.target.value)}
-            placeholder="Puzzle ID"
-            className="flex-1 border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
-          />
-          <button
-            type="submit"
-            disabled={disabled || !puzzleId.trim()}
-            className="bg-ink text-paper px-3 py-2 text-[11px] uppercase tracking-[0.07em] hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
-          >
-            Add
-          </button>
-        </form>
-      </div>
-
-      {/* Search by rating/themes */}
-      <div className="border-t border-line pt-4">
-        <h3 className="mb-2 text-[11px] uppercase tracking-[0.07em] text-muted2">Or search the library</h3>
+        <h3 className="mb-2 text-[11px] uppercase tracking-[0.07em] text-muted2">Find puzzles by rating &amp; theme</h3>
         <form onSubmit={runSearch} className="space-y-2">
           <div className="grid grid-cols-3 gap-2">
             <input
@@ -295,6 +275,26 @@ function ManualEditor({
             )}
           </ul>
         )}
+      </div>
+
+      {/* Add by ID — power-user fallback when you already know the puzzle */}
+      <div className="border-t border-line pt-4">
+        <h3 className="mb-2 text-[11px] uppercase tracking-[0.07em] text-muted2">Or add by puzzle ID</h3>
+        <form onSubmit={add} className="flex gap-2">
+          <input
+            value={puzzleId}
+            onChange={(e) => setPuzzleId(e.target.value)}
+            placeholder="Puzzle ID"
+            className="flex-1 border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
+          />
+          <button
+            type="submit"
+            disabled={disabled || !puzzleId.trim()}
+            className="bg-ink text-paper px-3 py-2 text-[11px] uppercase tracking-[0.07em] hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+          >
+            Add
+          </button>
+        </form>
       </div>
 
       {/* Ordered list with reorder controls */}

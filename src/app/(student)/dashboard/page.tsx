@@ -4,6 +4,9 @@ import { requireStudent } from "@/lib/auth-guards";
 import { versionTotal } from "@/lib/puzzles/version-total";
 import { currentStreak } from "@/lib/gamification/streaks";
 import { localDateFor } from "@/lib/gamification/dates";
+import { formatInTimeZone } from "date-fns-tz";
+import { puzzleTitle, humanizeTheme } from "@/lib/puzzles/labels";
+import { BoardPreview } from "@/components/chess/board-preview";
 
 export const dynamic = "force-dynamic";
 
@@ -81,39 +84,46 @@ export default async function Dashboard({
       .filter((g) => g.assignmentId !== null)
       .map((g) => [g.assignmentId as string, g._count._all])
   );
+  const goalPercent = Math.min(100, Math.round((solvedToday / Math.max(student.dailyGoal, 1)) * 100));
+  const activeAssignments = assignments.filter((assignment) => !assignment.completed);
 
   return (
-    <div className="space-y-10">
-      <div>
-        <h1 className="font-serif text-3xl tracking-tight">Welcome, {student.displayName}</h1>
-        <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
-          Rating {student.inAppRating} · {solvedCount} solved · {student.coinBalance} coins
-        </p>
-        <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
-          <span className={goalMet ? "text-rust" : ""}>
-            {solvedToday}/{student.dailyGoal} today
-          </span>
-        </p>
+    <div className="space-y-9">
+      <div className="page-heading">
+        <div>
+          <div className="page-kicker">Your training room</div>
+          <h1>Good {daypart(student.timezone)}, {student.displayName}</h1>
+          <p>{goalMet ? "Daily goal complete. Keep the momentum going or review an assignment." : `${student.dailyGoal - solvedToday} more puzzle${student.dailyGoal - solvedToday === 1 ? "" : "s"} to reach today's goal.`}</p>
+        </div>
+        <Link href="/practice" className="primary-action">Start practice <span aria-hidden="true">→</span></Link>
       </div>
 
-      <section className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <StatCard label="Current Rating" value={student.inAppRating} />
-        <StatCard label="Coins" value={student.coinBalance} />
-        <StatCard label="Streak" value={`${streak}d`} accent />
-        <StatCard label="Solved" value={solvedCount} />
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <div className="surface-card p-5 sm:p-7 flex flex-col sm:flex-row sm:items-center gap-6">
+          <div className="goal-ring" style={{ background: `conic-gradient(var(--rust) ${goalPercent}%, #e1dbcf ${goalPercent}% 100%)` }}>
+            <div><strong>{solvedToday}</strong><span>of {student.dailyGoal}</span></div>
+          </div>
+          <div className="flex-1">
+            <div className="page-kicker mb-2">Today&apos;s goal</div>
+            <h2 className="font-serif text-2xl tracking-tight">{goalMet ? "Nicely done — goal reached." : "Build consistency, one position at a time."}</h2>
+            <p className="mt-2 max-w-xl text-[13px] leading-6 text-muted">Your daily target keeps training focused and protects your streak. Practice picks the best available puzzle for your rating.</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 overflow-hidden surface-card">
+          <StatCard label="Rating" value={student.inAppRating} />
+          <StatCard label="Streak" value={`${streak}d`} accent />
+          <StatCard label="Coins" value={student.coinBalance} />
+        </div>
       </section>
 
       {params.queue === "complete" && (
-        <p className="border border-line bg-panel px-3 py-2 text-[13px] text-warning">
-          ◆ You&apos;ve solved all available puzzles in your rating range. Try again later —
-          new puzzles may be added, or your rating may shift the window.
-        </p>
+        <p className="surface-card border-warning/40 px-4 py-3 text-[13px] leading-6 text-warning">You&apos;ve completed every puzzle currently available in your rating range. Review an assignment now, then check back later.</p>
       )}
 
       {assignments.length > 0 && (
         <section>
-          <SectionLabel>Assignments</SectionLabel>
-          <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="section-title"><h2>Assignments</h2><span>{activeAssignments.length} active</span></div>
+          <ul className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {assignments.map((a) => {
               const total = versionTotal(a.version);
               const replays = replayCountByAssignment.get(a.id);
@@ -123,41 +133,25 @@ export default async function Dashboard({
                 ? "Continue"
                 : "Start";
               const overdue = !a.completed && a.dueDate && a.dueDate < new Date();
+              const progress = Math.min(100, Math.round((a.progress / Math.max(total, 1)) * 100));
               return (
-                <li key={a.id} className="border border-line bg-panel p-4">
-                  <div className="flex items-start justify-between gap-2">
+                <li key={a.id} className="surface-card p-5">
+                  <div className="flex items-start justify-between gap-4">
                     <div>
-                      <div className="font-serif text-lg">{a.version.set.title}</div>
-                      <div className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
-                        {a.progress}/{total}{" "}
-                        {a.version.mode === "FILTER" ? "solved" : "puzzles"}
-                        {a.completed && (
-                          <span className="text-success">
-                            {replays
-                              ? ` · done (${replays} replay${replays === 1 ? "" : "s"})`
-                              : " · done"}
-                          </span>
-                        )}
-                      </div>
+                      <div className="font-serif text-xl tracking-tight">{a.version.set.title}</div>
+                      <div className="mt-1 text-[11px] text-muted">{a.version.mode === "FILTER" ? "Adaptive set" : "Curated set"}{replays ? ` · ${replays} replay${replays === 1 ? "" : "s"}` : ""}</div>
                     </div>
                     {a.dueDate && (
-                      <div
-                        className={`text-[10px] uppercase tracking-[0.06em] px-2 py-1 whitespace-nowrap border ${
-                          overdue
-                            ? "border-error text-error"
-                            : "border-line text-muted"
-                        }`}
-                      >
-                        due {a.dueDate.toLocaleDateString()}
+                      <div className={`rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.08em] ${overdue ? "bg-error/10 text-error" : "bg-shade text-muted"}`}>
+                        {overdue ? "Overdue" : `Due ${a.dueDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
                       </div>
                     )}
                   </div>
-                  <Link
-                    href={`/sets/${a.id}`}
-                    className="mt-3 inline-block text-[12px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
-                  >
-                    {cta} →
-                  </Link>
+                  <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-shade"><div className="h-full rounded-full bg-rust" style={{ width: `${progress}%` }} /></div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-[11px] text-muted">{a.progress} of {total} complete</span>
+                    <Link href={`/sets/${a.id}`} className="secondary-action">{cta} →</Link>
+                  </div>
                 </li>
               );
             })}
@@ -166,53 +160,31 @@ export default async function Dashboard({
       )}
 
       <section>
-        <div className="flex justify-between items-center mb-4">
-          <SectionLabel className="mb-0">Puzzles</SectionLabel>
-          <Link
-            href="/practice"
-            className="bg-ink text-paper px-4 py-2 text-[11px] font-medium uppercase tracking-[0.07em] hover:bg-[#3a3630]"
-          >
-            Start daily practice →
-          </Link>
+        <div className="section-title"><h2>Explore puzzles</h2><Link href="/practice">Smart queue →</Link></div>
+        <div className="surface-card overflow-hidden">
+          <ul className="divide-y divide-line/70">
+            {availablePuzzles.slice(0, 5).map((p) => (
+              <li key={p.id} className="flex items-center gap-4 px-4 py-3 sm:px-5">
+                <div className="shrink-0"><BoardPreview fen={p.startFen} maxWidth={52} /></div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2"><strong className="text-[12px]">{puzzleTitle(p.themes)}</strong><span className="rounded-full bg-shade px-2 py-0.5 text-[9px] font-bold text-muted">{p.rating}</span></div>
+                  <div className="mt-1 truncate text-[11px] text-muted">{p.themes.slice(0, 3).map(humanizeTheme).join(" · ") || "Tactical training"}</div>
+                </div>
+                <Link href={`/practice/${p.id}`} className="secondary-action shrink-0">Solve</Link>
+              </li>
+            ))}
+          </ul>
         </div>
-        <ul className="border border-line bg-panel divide-y divide-line">
-          {availablePuzzles.map((p) => (
-            <li key={p.id} className="flex justify-between items-center p-4">
-              <div className="flex items-center gap-3">
-                <span className="text-[13px] text-muted">{p.id}</span>
-                <span className="border border-line text-muted text-[10px] uppercase tracking-[0.06em] px-2 py-0.5">
-                  {p.rating}
-                </span>
-                {p.themes.map((t) => (
-                  <span
-                    key={t}
-                    className="border border-line text-rust text-[10px] uppercase tracking-[0.06em] px-2 py-0.5"
-                  >
-                    {t}
-                  </span>
-                ))}
-              </div>
-              <Link
-                href={`/practice/${p.id}`}
-                className="text-[12px] uppercase tracking-[0.06em] text-rust hover:underline underline-offset-2"
-              >
-                Solve →
-              </Link>
-            </li>
-          ))}
-        </ul>
       </section>
 
       {student.attempts.length > 0 && (
         <section>
-          <SectionLabel>Recent activity</SectionLabel>
-          <ul className="border border-line bg-panel divide-y divide-line">
+          <div className="section-title"><h2>Recent activity</h2><span>{solvedCount} solved overall</span></div>
+          <ul className="surface-card divide-y divide-line/70 overflow-hidden">
             {student.attempts.map((a) => (
-              <li key={a.id} className="flex justify-between p-3 text-[13px]">
-                <span className="text-muted">{a.puzzle.id}</span>
-                <span className={a.status === "SOLVED" ? "text-success" : "text-error"}>
-                  {a.status === "SOLVED" ? "✓ Solved" : "✕ Failed"}
-                </span>
+              <li key={a.id} className="flex items-center justify-between px-5 py-3.5 text-[12px]">
+                <span><strong>{puzzleTitle(a.puzzle.themes)}</strong><span className="ml-2 text-muted">Rating {a.puzzle.rating}</span></span>
+                <span className={`rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.08em] ${a.status === "SOLVED" ? "bg-success/10 text-success" : "bg-error/10 text-error"}`}>{a.status === "SOLVED" ? "Solved" : "Try again"}</span>
               </li>
             ))}
           </ul>
@@ -222,25 +194,19 @@ export default async function Dashboard({
   );
 }
 
-function SectionLabel({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
+function StatCard({ label, value, accent = false }: { label: string; value: number | string; accent?: boolean }) {
   return (
-    <h2 className={`mb-4 text-[11px] font-medium uppercase tracking-[0.14em] text-muted2 ${className}`}>
-      {children}
-    </h2>
+    <div className="flex min-h-32 flex-col justify-center border-r border-line/70 p-4 last:border-r-0">
+      <div className={`font-serif text-3xl tracking-tight ${accent ? "text-rust" : ""}`}>{value}</div>
+      <div className="mt-1 text-[9px] font-bold uppercase tracking-[0.1em] text-muted">{label}</div>
+    </div>
   );
 }
 
-function StatCard({ label, value, accent = false }: { label: string; value: number | string; accent?: boolean }) {
-  return (
-    <div className="border border-line bg-panel p-4">
-      <div className="text-[10px] uppercase tracking-[0.1em] text-muted">{label}</div>
-      <div className={`font-serif text-3xl mt-1 ${accent ? "text-rust" : ""}`}>{value}</div>
-    </div>
-  );
+function daypart(tz: string) {
+  // Student-local hour, matching the timezone used for streaks/daily progress.
+  const hour = Number(formatInTimeZone(new Date(), tz, "H"));
+  if (hour < 12) return "morning";
+  if (hour < 17) return "afternoon";
+  return "evening";
 }

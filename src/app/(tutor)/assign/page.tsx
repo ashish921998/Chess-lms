@@ -1,6 +1,7 @@
 import { requireTutor } from "@/lib/auth-guards";
 import { db } from "@/lib/db";
 import { AssignForm } from "./assign-form";
+import { modeLabel } from "@/lib/puzzles/mode-label";
 
 export const dynamic = "force-dynamic";
 
@@ -13,8 +14,13 @@ export const dynamic = "force-dynamic";
  * (version, student) is a skip-if-exists no-op, so existing in-flight progress
  * is preserved.
  */
-export default async function AssignPage() {
+export default async function AssignPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ set?: string }>;
+}) {
   const tutor = await requireTutor();
+  const { set: preselectVersionId } = await searchParams;
 
   const [students, publishedSets] = await Promise.all([
     db.student.findMany({
@@ -35,20 +41,21 @@ export default async function AssignPage() {
   ]);
 
   // Flatten to <setId, versionId, label> options — always the latest version.
+  // Tutors pick a set by name; the version is resolved to the latest published
+  // one behind the scenes (the label never exposes the version machinery).
   const versionOptions = publishedSets.map((s) => ({
     versionId: s.versions[0]?.id,
-    label: `${s.title} (v${s.versions[0]?.version}, ${s.mode})`,
+    label: `${s.title} · ${modeLabel(s.mode)}`,
     disabled: !s.versions[0]?.id,
   }));
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="font-serif text-2xl tracking-tight">Assign homework</h1>
-        <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
-          Pick a published version, choose students, set an optional due date.
-        </p>
-      </div>
+    <div className="space-y-9">
+      <div className="page-heading"><div><div className="page-kicker">Create an assignment</div>
+        <h1>Assign homework</h1>
+        <p>
+          Pick a set, choose students, set an optional due date.
+        </p></div></div>
 
       {versionOptions.length === 0 ? (
         <p className="border border-line bg-panel px-4 py-8 text-center text-[13px] text-muted">
@@ -59,7 +66,15 @@ export default async function AssignPage() {
           No students on your roster yet.
         </p>
       ) : (
-        <AssignForm versionOptions={versionOptions} students={students} />
+        <AssignForm
+          versionOptions={versionOptions}
+          students={students}
+          preselectVersionId={
+            versionOptions.some((o) => o.versionId === preselectVersionId)
+              ? preselectVersionId
+              : undefined
+          }
+        />
       )}
     </div>
   );

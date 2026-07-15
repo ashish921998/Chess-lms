@@ -4,9 +4,7 @@ import { Chessboard } from "react-chessboard";
 
 type Props = {
   fen: string;
-  /** Pixel cap for the board. Defaults to 220 for grid cards. */
   maxWidth?: number;
-  /** Flip the board to black's perspective. */
   orientation?: "white" | "black";
 };
 

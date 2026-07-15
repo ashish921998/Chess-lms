@@ -71,7 +71,7 @@ export function NewSetForm() {
                   : "bg-paper text-muted border-line hover:border-ink"
               }`}
             >
-              {m}
+              {m === "MANUAL" ? "Curated" : "Adaptive"}
             </button>
           ))}
         </div>
