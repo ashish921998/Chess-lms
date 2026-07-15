@@ -92,7 +92,7 @@ export function PuzzleBoard({
           } else if (body.status === "solved") {
             setGame(new Chess(testGame.fen()));
             setStatus("solved");
-            setMessage(body.coinsAwarded > 0 ? `Solved! +${body.coinsAwarded} coins` : "Solved! (replay — no coins)");
+            setMessage(body.coinsAwarded > 0 ? `Solved! +${body.coinsAwarded} coins` : "Solved again — nice work! (practice only)");
           } else if (body.status === "continue") {
             testGame.move(body.opponentMove);
             setGame(new Chess(testGame.fen()));

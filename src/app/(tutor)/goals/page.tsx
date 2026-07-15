@@ -24,13 +24,12 @@ export default async function GoalsPage() {
   }));
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="font-serif text-2xl tracking-tight">Goals</h1>
-        <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
+    <div className="space-y-9">
+      <div className="page-heading"><div><div className="page-kicker">Training consistency</div>
+        <h1>Daily goals</h1>
+        <p>
           Set each student&apos;s daily puzzle goal
-        </p>
-      </div>
+        </p></div></div>
 
       {rows.length === 0 ? (
         <p className="border border-line bg-panel px-4 py-8 text-center text-[13px] text-muted">

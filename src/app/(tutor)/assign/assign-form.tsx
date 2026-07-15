@@ -18,9 +18,11 @@ type Student = { id: string; displayName: string; inAppRating: number };
 export function AssignForm({
   versionOptions,
   students,
+  preselectVersionId,
 }: {
   versionOptions: VersionOption[];
   students: Student[];
+  preselectVersionId?: string;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +55,7 @@ export function AssignForm({
     const fd = new FormData(e.currentTarget);
     const versionId = String(fd.get("versionId") || "");
     if (!versionId) {
-      setError("Pick a version.");
+      setError("Pick a set.");
       return;
     }
     if (selected.size === 0) {
@@ -100,15 +102,15 @@ export function AssignForm({
       )}
 
       <section className="border border-line bg-panel p-6 space-y-3">
-        <label className="block text-[11px] uppercase tracking-[0.07em] text-muted2">Version</label>
+        <label className="block text-[11px] uppercase tracking-[0.07em] text-muted2">Puzzle set</label>
         <select
           name="versionId"
           required
-          defaultValue=""
+          defaultValue={preselectVersionId ?? ""}
           className="w-full border border-line bg-paper px-3 py-2 font-mono text-[13px] text-ink focus:outline-none focus:border-ink"
         >
           <option value="" disabled>
-            Select a published version…
+            Select a set…
           </option>
           {versionOptions.map((o) => (
             <option key={o.versionId ?? o.label} value={o.versionId ?? ""} disabled={o.disabled}>

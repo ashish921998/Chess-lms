@@ -3,7 +3,7 @@
 import { signOut } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 
-export function SignOutButton() {
+export function SignOutButton({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
   return (
     <button
@@ -11,9 +11,10 @@ export function SignOutButton() {
         await signOut();
         router.push("/login");
       }}
-      className="text-[12px] uppercase tracking-[0.06em] text-muted hover:text-rust"
+      className={compact ? "app-signout" : "text-[12px] uppercase tracking-[0.06em] text-muted hover:text-rust"}
+      aria-label="Sign out"
     >
-      Sign out
+      {compact ? "↗" : "Sign out"}
     </button>
   );
 }

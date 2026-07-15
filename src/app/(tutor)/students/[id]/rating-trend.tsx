@@ -47,10 +47,10 @@ export function RatingTrend({
       />
       <path d={path} fill="none" stroke="none" />
       {/* axis labels */}
-      <text x={PAD - 6} y={PAD + 4} textAnchor="end" fontSize={9} fill="var(--muted)" fontFamily="var(--font-geist-mono)">
+      <text x={PAD - 6} y={PAD + 4} textAnchor="end" fontSize={9} fill="var(--muted)" fontFamily="var(--font-mono)">
         {max}
       </text>
-      <text x={PAD - 6} y={H - PAD} textAnchor="end" fontSize={9} fill="var(--muted)" fontFamily="var(--font-geist-mono)">
+      <text x={PAD - 6} y={H - PAD} textAnchor="end" fontSize={9} fill="var(--muted)" fontFamily="var(--font-mono)">
         {min}
       </text>
     </svg>

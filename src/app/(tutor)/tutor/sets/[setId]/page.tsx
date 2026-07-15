@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireTutor } from "@/lib/auth-guards";
 import { db } from "@/lib/db";
 import { SetEditor } from "./set-editor";
+import { modeLabel } from "@/lib/puzzles/mode-label";
 
 export const dynamic = "force-dynamic";
 
@@ -61,7 +62,7 @@ export default async function SetEditorPage({
                 : "border-line text-muted"
             }`}
           >
-            {set.mode}
+            {modeLabel(set.mode)}
           </span>
           <span
             className={`text-[10px] uppercase tracking-[0.06em] px-2 py-0.5 border ${
@@ -80,6 +81,14 @@ export default async function SetEditorPage({
           <p className="mt-1 text-[11px] uppercase tracking-[0.05em] text-muted2">
             Latest version: v{set.versions[0].version}
           </p>
+        )}
+        {set.isPublished && set.versions[0] && (
+          <Link
+            href={`/assign?set=${set.versions[0].id}`}
+            className="primary-action mt-4 inline-flex"
+          >
+            Assign to students <span aria-hidden="true">→</span>
+          </Link>
         )}
       </div>
 

@@ -52,10 +52,7 @@ export function LibraryBrowser({ sets, themes }: Props) {
   // When the target set changes, fetch its current puzzle IDs so we can mark
   // already-added puzzles in the results grid.
   useEffect(() => {
-    if (!targetSetId) {
-      setAddedIds(new Set());
-      return;
-    }
+    if (!targetSetId) return; // no target → nothing to fetch; render guards the marks
     let cancelled = false;
     fetch(`/api/tutor/sets/${targetSetId}/items`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
@@ -234,7 +231,7 @@ export function LibraryBrowser({ sets, themes }: Props) {
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {results.map((p) => {
-              const added = addedIds.has(p.id);
+              const added = targetSetId ? addedIds.has(p.id) : false;
               return (
                 <div key={p.id} className="border border-line bg-panel p-4 space-y-3">
                   <div className="flex justify-center">

@@ -33,13 +33,13 @@ export default async function ProfilePage({
   const streak = await currentStreak(db, me.id, localDateFor(new Date(), student.timezone));
 
   return (
-    <div className="space-y-8">
-      <h1 className="font-serif text-3xl tracking-tight">Profile</h1>
+    <div className="space-y-9">
+      <div className="page-heading"><div><div className="page-kicker">Account & achievements</div><h1>Profile</h1><p>Manage your chess connection, local training time, and the milestones you have earned.</p></div></div>
 
       {/* Identity + timezone (left) + dark stats (right). */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {/* Left: Lichess + timezone. */}
-        <section className="border border-line bg-panel p-6 space-y-6">
+        <section className="surface-card p-6 space-y-6">
           <div>
             <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted2">Lichess</h2>
             <div className="mt-3">
@@ -68,12 +68,12 @@ export default async function ProfilePage({
                   </dl>
                 </div>
               ) : (
-                <a
+                <Link
                   href="/api/auth/lichess/start"
                   className="inline-block bg-ink text-paper px-4 py-2 text-[11px] font-medium uppercase tracking-[0.07em] hover:bg-[#3a3630]"
                 >
                   Connect Lichess
-                </a>
+                </Link>
               )}
             </div>
           </div>
@@ -81,7 +81,7 @@ export default async function ProfilePage({
         </section>
 
         {/* Right: dark stats panel. */}
-        <section className="border border-ink bg-ink text-paper p-6">
+        <section className="rounded-2xl border border-ink bg-ink text-paper p-6 shadow-xl shadow-ink/10">
           <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#b3ab9c]">Stats</h2>
           <dl className="mt-4 grid grid-cols-2 gap-y-5">
             <Stat label="Rating" value={student.inAppRating} accent />
@@ -104,7 +104,7 @@ export default async function ProfilePage({
       )}
 
       {/* Badges — full-width below. */}
-      <section className="border border-line bg-panel p-6">
+      <section className="surface-card p-6">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted2">
           Badges · {student.badges.length} earned
         </h2>

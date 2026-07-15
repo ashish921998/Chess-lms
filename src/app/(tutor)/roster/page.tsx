@@ -58,6 +58,8 @@ export default async function RosterPage() {
   const activeCountByStudent = new Map(
     activeGroups.map((g) => [g.studentId, g._count._all])
   );
+  const activeAssignmentCount = activeGroups.reduce((total, group) => total + group._count._all, 0);
+  const studentsWithActivity = students.filter((student) => student.attempts[0]).length;
 
   const invites: InviteView[] = inviteRows.map((i) => ({
     id: i.id,
@@ -69,74 +71,72 @@ export default async function RosterPage() {
   }));
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="font-serif text-2xl tracking-tight">Roster</h1>
-        <p className="mt-1 text-[12px] uppercase tracking-[0.05em] text-muted">
-          {students.length} students
-        </p>
+    <div className="space-y-9">
+      <div className="page-heading">
+        <div>
+          <div className="page-kicker">Tutor overview</div>
+          <h1>Your students</h1>
+          <p>See progress at a glance, spot students who have gone quiet, and jump straight into the next coaching action.</p>
+        </div>
+        <Link href="/assign" className="primary-action">Assign homework <span aria-hidden="true">→</span></Link>
       </div>
+
+      <section className="grid grid-cols-3 overflow-hidden surface-card">
+        <RosterStat value={students.length} label="Students" />
+        <RosterStat value={activeAssignmentCount} label="Active assignments" />
+        <RosterStat value={studentsWithActivity} label="With activity" accent />
+      </section>
 
       <InviteCodes invites={invites} />
 
       {students.length === 0 ? (
-        <p className="border border-line bg-panel px-4 py-8 text-center text-[13px] text-muted">
-          No students yet. Generate an invite code above and share it.
-        </p>
+        <div className="surface-card px-5 py-12 text-center"><div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-shade text-xl">♙</div><h2 className="font-serif text-xl">Your roster is ready for its first student</h2><p className="mt-2 text-[13px] text-muted">Generate an invite code above and share it with your class.</p></div>
       ) : (
-        <ul className="space-y-3">
+        <section>
+          <div className="section-title"><h2>Roster</h2><span>Sorted alphabetically</span></div>
+          <ul className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {students.map((s) => {
-            const active = activeCountByStudent.get(s.id);
+            const active = activeCountByStudent.get(s.id) ?? 0;
+            const lastActive = s.attempts[0]?.createdAt;
             return (
-              <li key={s.id} className="border border-line bg-panel p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-baseline gap-3">
+              <li key={s.id} className="surface-card p-5">
+                <div className="flex items-start gap-3">
+                  <div className="app-avatar h-10 w-10 text-base">{s.displayName.charAt(0).toUpperCase()}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <Link
                       href={`/students/${s.id}`}
-                      className="font-serif text-lg tracking-tight hover:text-rust"
+                      className="font-serif text-xl tracking-tight hover:text-rust"
                     >
                       {s.displayName}
                     </Link>
-                    <span className="text-[12px] uppercase tracking-[0.05em] text-muted">
-                      Rating <span className="text-rust">{s.inAppRating}</span>
-                    </span>
-                    {active ? (
-                      <span className="text-[10px] uppercase tracking-[0.06em] border border-warning text-warning px-2 py-0.5">
-                        {active} active
-                      </span>
-                    ) : null}
+                    <span className="rounded-full bg-shade px-2 py-1 text-[9px] font-bold text-muted">{s.inAppRating} rating</span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted">{lastActive ? `Last active ${formatRelative(lastActive)}` : "No practice activity yet"}</p>
                   </div>
-                  <span className="text-[12px] uppercase tracking-[0.05em] text-muted">
-                    {s.attempts[0]
-                      ? `Active ${formatRelative(s.attempts[0].createdAt)}`
-                      : "No activity"}
-                  </span>
+                  <Link href={`/students/${s.id}`} className="secondary-action shrink-0">View</Link>
                 </div>
 
-                {s.assignments.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {s.assignments.map((a) => (
-                      <span
-                        key={a.id}
-                        className={`text-[10px] uppercase tracking-[0.06em] px-2 py-1 border ${
-                          a.completed
-                            ? "border-success/40 text-success"
-                            : "border-line text-muted"
-                        }`}
-                      >
-                        {a.version.set.title}: {a.progress}/{versionTotal(a.version)}
-                        {a.completed && " ✓"}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <div className="mt-5 border-t border-line/70 pt-4">
+                  <div className="mb-2 flex items-center justify-between text-[10px]"><span className="font-bold uppercase tracking-[.08em] text-muted">Assignments</span><span className={active ? "text-warning" : "text-muted"}>{active ? `${active} active` : "All clear"}</span></div>
+                  {s.assignments.length > 0 ? <div className="space-y-2">{s.assignments.slice(0, 2).map((a) => {
+                    const total = versionTotal(a.version);
+                    const percent = Math.min(100, Math.round((a.progress / Math.max(total, 1)) * 100));
+                    return <div key={a.id} className="grid grid-cols-[1fr_auto] items-center gap-3"><div><div className="flex justify-between gap-3 text-[11px]"><span className="truncate">{a.version.set.title}</span><span className="text-muted">{a.progress}/{total}</span></div><div className="mt-1 h-1 overflow-hidden rounded-full bg-shade"><div className={a.completed ? "h-full bg-success" : "h-full bg-rust"} style={{ width: `${percent}%` }} /></div></div>{a.completed && <span className="text-[10px] text-success">✓</span>}</div>;
+                  })}</div> : <p className="text-[11px] text-muted">No assignments yet.</p>}
+                </div>
               </li>
             );
           })}
-        </ul>
+          </ul>
+        </section>
       )}
     </div>
   );
+}
+
+function RosterStat({ value, label, accent = false }: { value: number; label: string; accent?: boolean }) {
+  return <div className="border-r border-line/70 p-4 sm:p-5 last:border-r-0"><strong className={`block font-serif text-2xl sm:text-3xl ${accent ? "text-rust" : ""}`}>{value}</strong><span className="mt-1 block text-[8px] sm:text-[9px] font-bold uppercase tracking-[.08em] text-muted">{label}</span></div>;
 }
 
 function formatRelative(date: Date): string {
