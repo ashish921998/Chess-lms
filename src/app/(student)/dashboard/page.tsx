@@ -4,6 +4,7 @@ import { requireStudent } from "@/lib/auth-guards";
 import { versionTotal } from "@/lib/puzzles/version-total";
 import { currentStreak } from "@/lib/gamification/streaks";
 import { localDateFor } from "@/lib/gamification/dates";
+import { formatInTimeZone } from "date-fns-tz";
 import { puzzleTitle, humanizeTheme } from "@/lib/puzzles/labels";
 import { BoardPreview } from "@/components/chess/board-preview";
 
@@ -91,7 +92,7 @@ export default async function Dashboard({
       <div className="page-heading">
         <div>
           <div className="page-kicker">Your training room</div>
-          <h1>Good {daypart()}, {student.displayName}</h1>
+          <h1>Good {daypart(student.timezone)}, {student.displayName}</h1>
           <p>{goalMet ? "Daily goal complete. Keep the momentum going or review an assignment." : `${student.dailyGoal - solvedToday} more puzzle${student.dailyGoal - solvedToday === 1 ? "" : "s"} to reach today's goal.`}</p>
         </div>
         <Link href="/practice" className="primary-action">Start practice <span aria-hidden="true">→</span></Link>
@@ -202,8 +203,9 @@ function StatCard({ label, value, accent = false }: { label: string; value: numb
   );
 }
 
-function daypart() {
-  const hour = new Date().getHours();
+function daypart(tz: string) {
+  // Student-local hour, matching the timezone used for streaks/daily progress.
+  const hour = Number(formatInTimeZone(new Date(), tz, "H"));
   if (hour < 12) return "morning";
   if (hour < 17) return "afternoon";
   return "evening";

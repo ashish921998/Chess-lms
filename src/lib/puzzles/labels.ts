@@ -8,9 +8,12 @@
 // them when picking a title so "Back rank" wins over "Short".
 const QUALIFIER_THEMES = new Set(["short", "long", "veryLong", "oneMove"]);
 
-/** "backRank" → "Back rank". */
+/** "backRank" → "Back rank", "mateIn2" → "Mate in 2". */
 export function humanizeTheme(theme: string): string {
-  const spaced = theme.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+  const spaced = theme
+    .replace(/([a-z])([A-Z])/g, "$1 $2") // camelCase boundary
+    .replace(/([a-zA-Z])(\d)/g, "$1 $2") // letter→digit boundary (mateIn2)
+    .toLowerCase();
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 

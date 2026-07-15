@@ -10,6 +10,11 @@ describe("humanizeTheme", () => {
     expect(humanizeTheme("mate")).toBe("Mate");
     expect(humanizeTheme("discoveredAttack")).toBe("Discovered attack");
   });
+
+  it("splits letter→digit boundaries (Lichess mateInN tags)", () => {
+    expect(humanizeTheme("mateIn2")).toBe("Mate in 2");
+    expect(humanizeTheme("mateIn1")).toBe("Mate in 1");
+  });
 });
 
 describe("puzzleTitle", () => {

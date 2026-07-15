@@ -63,7 +63,10 @@ export function AppShell({ children, name, role, nav }: AppShellProps) {
           <span aria-hidden="true">♞</span>
           Knight Riders
         </Link>
-        <div className="app-avatar" aria-label={`${name}, ${role}`}>{name.charAt(0).toUpperCase()}</div>
+        <div className="flex items-center gap-2">
+          <div className="app-avatar" aria-label={`${name}, ${role}`}>{name.charAt(0).toUpperCase()}</div>
+          <SignOutButton compact />
+        </div>
       </header>
 
       <main className="app-main">{children}</main>
