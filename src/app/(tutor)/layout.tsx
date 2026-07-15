@@ -29,6 +29,7 @@ export default async function TutorLayout({
             <nav className="flex gap-6 text-[12px] uppercase tracking-[0.05em] text-muted">
               <Link href="/roster" className="hover:text-rust">Roster</Link>
               <Link href="/tutor/sets" className="hover:text-rust">Sets</Link>
+              <Link href="/library" className="hover:text-rust">Library</Link>
               <Link href="/assign" className="hover:text-rust">Assign</Link>
               <Link href="/goals" className="hover:text-rust">Goals</Link>
             </nav>

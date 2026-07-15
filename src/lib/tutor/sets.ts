@@ -180,14 +180,21 @@ export async function searchPuzzlesTx(
   const themeClause = themes.length > 0 ? Prisma.sql`AND p.themes && ${themes}::text[]` : Prisma.empty;
 
   const rows = await tx.$queryRaw<
-    { id: string; rating: number; themes: string[]; popularity: number }[]
+    {
+      id: string;
+      rating: number;
+      themes: string[];
+      popularity: number;
+      startFen: string;
+      openingTags: string[];
+    }[]
   >`
-    SELECT p.id, p.rating, p.themes, p.popularity
+    SELECT p.id, p.rating, p.themes, p.popularity, p."startFen", p."openingTags"
     FROM "Puzzle" p
     WHERE (${ratingMin}::int IS NULL OR p.rating >= ${ratingMin}::int)
       AND (${ratingMax}::int IS NULL OR p.rating <= ${ratingMax}::int)
       ${themeClause}
-    ORDER BY p.popularity DESC
+    ORDER BY p.popularity DESC, p.id
     LIMIT ${limit}
   `;
   return rows;
