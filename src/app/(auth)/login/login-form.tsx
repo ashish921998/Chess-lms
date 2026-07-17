@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "@/lib/auth-client";
+import { PasswordInput } from "@/components/password-input";
 
 const field =
   "w-full border border-line bg-panel px-3.5 py-3 text-[13px] text-ink placeholder:text-muted2 focus:outline-none focus:border-ink transition-colors";
@@ -52,14 +53,12 @@ export function LoginForm() {
           <label htmlFor="password" className={label}>
             Password
           </label>
-          <input
+          <PasswordInput
             id="password"
             name="password"
-            type="password"
             placeholder="••••••••"
             autoComplete="current-password"
             required
-            className={field}
           />
         </div>
         <button

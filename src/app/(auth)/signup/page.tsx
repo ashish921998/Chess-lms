@@ -5,6 +5,7 @@ import { APIError } from "better-auth";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { AuthShell } from "@/components/auth-shell";
+import { PasswordInput } from "@/components/password-input";
 
 async function signup(formData: FormData) {
   "use server";
@@ -131,15 +132,13 @@ export default function SignupPage({
           <label htmlFor="password" className={labelCls}>
             Password
           </label>
-          <input
+          <PasswordInput
             id="password"
             name="password"
-            type="password"
             placeholder="Min 8 characters"
             autoComplete="new-password"
             required
             minLength={8}
-            className={field}
           />
         </div>
         <div>
