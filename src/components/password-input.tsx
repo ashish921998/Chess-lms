@@ -26,7 +26,7 @@ export function PasswordInput({ className, ...props }: PasswordInputProps) {
         onClick={() => setShow((s) => !s)}
         aria-label={show ? "Hide password" : "Show password"}
         aria-pressed={show}
-        tabIndex={-1}
+        tabIndex={0}
         className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted2 transition-colors hover:text-ink focus:outline-none"
       >
         {show ? <EyeOffIcon /> : <EyeIcon />}
