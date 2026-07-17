@@ -64,13 +64,14 @@ model Verification {
 
 // ─── Tutor & Student profiles (1:1 with User) ───
 model Tutor {
-  id        String      @id @default(cuid())
-  userId    String      @unique
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String          @id @default(cuid())
+  userId    String          @unique
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   students  Student[]
   sets      PuzzleSet[]
   invites   InviteCode[]
-  createdAt DateTime    @default(now())
+  feedback  TutorFeedback[]
+  createdAt DateTime        @default(now())
 }
 
 model Student {
@@ -393,4 +394,44 @@ model RatingEvent {
   createdAt DateTime      @default(now())
 
   @@index([studentId, createdAt])
+}
+
+// ─── Platform-guide feedback (tutor → developer change-request board) ───
+// Tutors read the guide (FOR_TUTOR.md) in-app and leave comments, feature
+// requests, or bug reports tied to a section. The developer (email allowlisted
+// via DEVELOPER_EMAILS) triages them by changing status / adding a dev note.
+// The board is shared across tutors — it concerns the platform, not private
+// student data. An author may edit/delete only their own; the developer may
+// act on any row.
+enum FeedbackKind {
+  COMMENT
+  FEATURE_REQUEST
+  BUG
+}
+
+enum FeedbackStatus {
+  OPEN
+  ACKNOWLEDGED
+  IN_PROGRESS
+  DONE
+  WONTFIX
+}
+
+model TutorFeedback {
+  id           String          @id @default(cuid())
+  tutorId      String
+  tutor        Tutor           @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  authorName   String                                   // snapshot of User.name/email for display
+  sectionId    String                                   // guide section anchor (see src/lib/tutor/guide.ts)
+  sectionTitle String
+  kind         FeedbackKind    @default(COMMENT)
+  status       FeedbackStatus  @default(OPEN)
+  body         String
+  devNote      String?                                  // developer reply / resolution note
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  resolvedAt   DateTime?
+
+  @@index([sectionId])
+  @@index([status])
 }

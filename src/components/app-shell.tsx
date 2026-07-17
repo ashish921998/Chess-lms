@@ -7,7 +7,7 @@ import { SignOutButton } from "@/components/sign-out-button";
 type NavItem = {
   href: string;
   label: string;
-  icon: "home" | "practice" | "trophy" | "profile" | "students" | "sets" | "library" | "assign" | "goals";
+  icon: "home" | "practice" | "trophy" | "profile" | "students" | "sets" | "library" | "assign" | "goals" | "guide";
 };
 
 type AppShellProps = {
@@ -99,6 +99,7 @@ function ShellIcon({ name }: { name: NavItem["icon"] }) {
     library: <><path d="M4 5h6v14H4zM14 5h6v14h-6z"/><path d="M7 8v8M17 8v8"/></>,
     assign: <><path d="M5 4h14v16H5z"/><path d="M9 8h6M9 12h6M9 16h3"/><path d="m16 15 1.5 1.5L21 13"/></>,
     goals: <><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="m15 9 5-5M16 4h4v4"/></>,
+    guide: <><path d="M4 5a1 1 0 0 1 1-1h5a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H4Z"/><path d="M20 5a1 1 0 0 0-1-1h-5a2 2 0 0 0-2 2v13a2 2 0 0 1 2-2h6Z"/><path d="M7 8h3M7 11h3M14 8h3M14 11h3"/></>,
   };
 
   return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;

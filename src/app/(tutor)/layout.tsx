@@ -26,6 +26,7 @@ export default async function TutorLayout({
       { href: "/library", label: "Library", icon: "library" },
       { href: "/assign", label: "Assign", icon: "assign" },
       { href: "/goals", label: "Goals", icon: "goals" },
+      { href: "/feedback", label: "Guide", icon: "guide" },
     ]}
   >{children}</AppShell>;
 }
