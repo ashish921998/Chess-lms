@@ -1,0 +1,52 @@
+src/app/(tutor)/layout.tsx
+  s_7d098fa13a1a9f::t_81a7f20aa701c6 29
+.env.example
+  s_7d098fa13a1a9f::t_68f4e630e67f46 16-20
+src/lib/developer.ts
+  s_7d098fa13a1a9f::t_f3c892ca2660f3 1-20
+src/app/api/tutor/feedback/[id]/route.ts
+  s_7d098fa13a1a9f::t_b337ac9b963550 1-112
+FOR_TUTOR.md
+  s_2a14569ed916cd::t_9ab484321d12b5 1-145
+src/components/app-shell.tsx
+  s_7d098fa13a1a9f::t_f1602891c9a17b 10
+  s_7d098fa13a1a9f::t_0581e76104be67 102
+src/app/api/tutor/feedback/route.ts
+  s_7d098fa13a1a9f::t_17dc92c02b2ce3 70
+  s_7d098fa13a1a9f::t_799f04223d303d 1-69,71-102
+src/app/(tutor)/feedback/page.tsx
+  s_7d098fa13a1a9f::t_2d40943fff8c44 1-50
+prisma/migrations/20260716131310_add_tutor_feedback/migration.sql
+  s_7d098fa13a1a9f::t_2c2ea5acd22eef 1-32
+prisma/schema.prisma
+  s_7d098fa13a1a9f::t_719727b2d50204 398-437
+  s_7d098fa13a1a9f::t_561bea86b3cd25 67-69,73-74
+src/lib/tutor/guide.ts
+  s_7d098fa13a1a9f::t_60ce4ebec4cb28 1-334
+src/app/(tutor)/feedback/feedback-board.tsx
+  s_7d098fa13a1a9f::t_5687541bf32aa7 1-493
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "26a2dbd14c5e710e4b3fc4436afc1b101b6dda0e",
+  "prompts": {},
+  "sessions": {
+    "s_2a14569ed916cd": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_09988adb9ffekx0Vo5aU2z2dSY",
+        "model": "deepseek-v4-flash-free"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    },
+    "s_7d098fa13a1a9f": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_094f42ecfffe5cNYFdtSDQAghG",
+        "model": "glm-5.2"
+      },
+      "human_author": "Ashish Huddar <ashish.hudar@gmail.com>"
+    }
+  }
+}
